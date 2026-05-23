@@ -15,39 +15,38 @@ export function PWAInstallPrompt() {
   const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
-    const checkIOSAndroid = () => {
-      const ua = navigator.userAgent;
-      const isIOSDevice = /iPad|iPhone|iPod/.test(ua);
-      const isAndroid = /Android/.test(ua);
+    const ua = navigator.userAgent;
+    const isIOSDevice = /iPad|iPhone|iPod/.test(ua);
 
-      if (isIOSDevice) {
-        setIsIOS(true);
-        const isPWAInstalled = (window.navigator as any).standalone === true;
-        if (!isPWAInstalled) {
-          setShowPrompt(true);
-        }
+    // iOS는 beforeinstallprompt를 지원하지 않으므로, standalone 모드가 아닐 때 안내 표시
+    if (isIOSDevice) {
+      setIsIOS(true);
+      const isPWAInstalled = (window.navigator as any).standalone === true;
+      const dismissedThisSession =
+        typeof sessionStorage !== "undefined" &&
+        sessionStorage.getItem("pwa-dismissed") === "1";
+      if (!isPWAInstalled && !dismissedThisSession) {
+        setShowPrompt(true);
       }
+    }
 
-      if (!isIOSDevice && !isAndroid) {
-        setShowPrompt(false);
-      }
-    };
-
+    // iOS 외 (Android / Desktop Chrome / Edge 등): beforeinstallprompt 수신 시 표시
     const handleBeforeInstallPrompt = (e: Event) => {
       e.preventDefault();
       setDeferredPrompt(e as BeforeInstallPromptEvent);
-      if (!dismissed) {
+      const dismissedThisSession =
+        typeof sessionStorage !== "undefined" &&
+        sessionStorage.getItem("pwa-dismissed") === "1";
+      if (!dismissed && !dismissedThisSession) {
         setShowPrompt(true);
       }
     };
 
     const handleAppInstalled = () => {
-      console.log("[PWA] App installed");
       setShowPrompt(false);
       setDeferredPrompt(null);
     };
 
-    checkIOSAndroid();
     window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
     window.addEventListener("appinstalled", handleAppInstalled);
 
@@ -72,6 +71,9 @@ export function PWAInstallPrompt() {
   const handleDismiss = () => {
     setShowPrompt(false);
     setDismissed(true);
+    if (typeof sessionStorage !== "undefined") {
+      sessionStorage.setItem("pwa-dismissed", "1");
+    }
   };
 
   if (!showPrompt) {

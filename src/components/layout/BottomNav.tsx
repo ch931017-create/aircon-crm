@@ -9,6 +9,7 @@ import {
   MapPin,
   PhoneCall,
   Shield,
+  Users,
   Wallet,
 } from "lucide-react";
 import type { UserRole } from "@/types/database";
@@ -41,6 +42,7 @@ function itemsFor(role: UserRole): NavItem[] {
   }
 
   if (role === "admin") {
+    base.push({ href: "/admin/users", label: "사용자", Icon: Users });
     base.push({ href: "/admin/settlements", label: "정산", Icon: Wallet });
     base.push({ href: "/admin", label: "관리", Icon: Shield });
   }

@@ -1,3 +1,4 @@
+import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { Header } from "@/components/layout/Header";
 import { BottomNav } from "@/components/layout/BottomNav";
@@ -9,6 +10,15 @@ export default async function AppLayout({
   children: React.ReactNode;
 }) {
   const user = await requireUser();
+
+  // 승인 가드: pending/rejected 사용자는 앱 기능 접근 차단.
+  // admin은 본인이 'pending'이면 안 되지만 (012 migration에서 백필) 만일을 위해 우회.
+  if (
+    user.profile.role !== "admin" &&
+    user.profile.approval_status !== "approved"
+  ) {
+    redirect("/pending-approval");
+  }
 
   return (
     <div className="flex min-h-screen flex-col bg-slate-50">

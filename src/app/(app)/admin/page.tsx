@@ -112,7 +112,20 @@ const cards = [
         </p>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div>
+            <h2 className="text-base font-semibold">사용자 관리</h2>
+            <p className="text-sm text-slate-500">계정 생성, 역할 변경, 승인 처리.</p>
+          </div>
+          <a
+            href="/admin/users"
+            className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
+          >
+            이동
+          </a>
+        </div>
+
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
           <div>
             <h2 className="text-base font-semibold">정산 관리</h2>

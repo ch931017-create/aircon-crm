@@ -76,16 +76,17 @@ export async function signUpAction(
     return { error: message };
   }
 
-  // Supabase 프로젝트에서 이메일 확인이 켜져 있으면 세션이 없음 → 안내만
+  // 이메일 확인이 켜져 있으면 세션 없음 → 메일 인증 + 관리자 승인 둘 다 안내
   if (!data.session) {
     return {
       notice:
-        "가입 요청이 접수되었습니다. 받은 메일함의 인증 메일을 확인한 뒤 로그인해 주세요.",
+        "가입 요청이 접수되었습니다. 받은 메일함의 인증 메일을 확인하고, 관리자 승인이 완료되면 로그인할 수 있습니다.",
     };
   }
 
-  // 이메일 확인 OFF인 경우: 즉시 로그인 상태 → 기사 화면으로
-  redirect(defaultRouteFor("technician"));
+  // 이메일 확인 OFF인 경우: 즉시 로그인 상태이지만 approval_status='pending' 이므로
+  // app layout 가드가 /pending-approval 로 보냄. 일관성을 위해 명시적 리다이렉트.
+  redirect("/pending-approval");
 }
 
 export async function signOutAction() {

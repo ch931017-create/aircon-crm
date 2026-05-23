@@ -13,6 +13,7 @@ export type Json =
   | Json[];
 
 export type UserRole = "admin" | "dispatcher" | "technician";
+export type ApprovalStatus = "pending" | "approved" | "rejected";
 export type PaymentMethod =
   | "cash"
   | "transfer"
@@ -42,6 +43,9 @@ export interface ProfileRow {
   cash_ratio: number;
   invoice_ratio: number;
   card_ratio: number;
+  approval_status: ApprovalStatus;
+  approved_at: string | null;
+  approved_by: string | null;
   [key: string]: unknown;
 }
 
@@ -101,6 +105,9 @@ interface ProfileInsert {
   role?: UserRole;
   is_active?: boolean;
   created_at?: string;
+  approval_status?: ApprovalStatus;
+  approved_at?: string | null;
+  approved_by?: string | null;
   [key: string]: unknown;
 }
 
@@ -111,6 +118,9 @@ interface ProfileUpdate {
   role?: UserRole;
   is_active?: boolean;
   created_at?: string;
+  approval_status?: ApprovalStatus;
+  approved_at?: string | null;
+  approved_by?: string | null;
   [key: string]: unknown;
 }
 
@@ -236,6 +246,7 @@ export type Database = {
       settlement_status: SettlementStatus;
       payment_status: PaymentStatus;
       payment_method: PaymentMethod;
+      approval_status: ApprovalStatus;
     };
     CompositeTypes: Record<string, never>;
   };
