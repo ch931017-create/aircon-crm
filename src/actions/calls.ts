@@ -10,6 +10,9 @@ import { sendPushToProfile } from "@/lib/web-push";
 export interface CreateCallState {
   error?: string;
   fieldErrors?: Record<string, string>;
+  success?: boolean;
+  // 매 응답마다 새 reference 보장 → CallForm의 useEffect dep 정확 트리거
+  ts?: number;
 }
 
 export async function createCallAction(
@@ -36,14 +39,14 @@ export async function createCallAction(
         fieldErrors[key] = issue.message;
       }
     }
-    return { error: "입력값을 확인하세요", fieldErrors };
+    return { error: "입력값을 확인하세요", fieldErrors, ts: Date.now() };
   }
 
   const supabase = createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user) return { error: "로그인이 필요합니다." };
+  if (!user) return { error: "로그인이 필요합니다.", ts: Date.now() };
 
   const input = parsed.data;
 
@@ -81,11 +84,13 @@ export async function createCallAction(
   });
 
   if (error) {
-    return { error: `등록 실패: ${error.message}` };
+    return { error: `등록 실패: ${error.message}`, ts: Date.now() };
   }
 
+  // redirect 제거 — client(CallForm)가 success 감지 후 form reset + router.refresh
+  // (PC split view에서 form unmount되지 않아 reset이 필요)
   revalidatePath("/calls");
-  redirect("/calls");
+  return { success: true, ts: Date.now() };
 }
 
 export interface CallActionState {

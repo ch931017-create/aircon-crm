@@ -1,7 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useFormState, useFormStatus } from "react-dom";
+import { toast } from "sonner";
 import { createCallAction, type CreateCallState } from "@/actions/calls";
 import { REGION_GROUPS } from "@/lib/regions";
 
@@ -13,7 +15,15 @@ const HOUR_OPTIONS: string[] = Array.from({ length: 13 }, (_, i) => {
   return `${String(hour).padStart(2, "0")}:00`;
 });
 
-export function CallForm() {
+interface CallFormProps {
+  // 명시되면 등록 성공 후 해당 경로로 이동.
+  // 미지정이면 같은 페이지에 머무르면서 form reset + 콜 리스트 refresh.
+  redirectAfterSuccess?: string;
+}
+
+export function CallForm({ redirectAfterSuccess }: CallFormProps = {}) {
+  const router = useRouter();
+  const formRef = useRef<HTMLFormElement>(null);
   const [state, formAction] = useFormState(createCallAction, initial);
   // state가 undefined가 되는 엣지 케이스(action 비정상 종료 등) 방어
   const fe = state?.fieldErrors ?? {};
@@ -23,6 +33,31 @@ export function CallForm() {
 
   const [preferredDate, setPreferredDate] = useState<string>("");
   const [preferredHour, setPreferredHour] = useState<string>("");
+
+  // 마지막 success 처리 ts (중복 처리 방지)
+  const handledTsRef = useRef<number | undefined>(undefined);
+
+  // 등록 성공 시: form reset + local state reset + router.refresh (또는 redirect)
+  useEffect(() => {
+    if (!state?.success || !state.ts) return;
+    if (handledTsRef.current === state.ts) return;
+    handledTsRef.current = state.ts;
+
+    formRef.current?.reset();
+    setSelectedSido("");
+    setSelectedDistrict("");
+    setPreferredDate("");
+    setPreferredHour("");
+
+    toast.success("콜이 등록되었습니다");
+
+    if (redirectAfterSuccess) {
+      router.push(redirectAfterSuccess);
+    } else {
+      // 같은 페이지에 머무름 — server component(CallsPage) 재실행 → CallList props 갱신
+      router.refresh();
+    }
+  }, [state, redirectAfterSuccess, router]);
 
   const availableDistricts = useMemo(() => {
     const group = REGION_GROUPS.find((g) => g.sido === selectedSido);
@@ -39,7 +74,7 @@ export function CallForm() {
   }, [preferredDate, preferredHour]);
 
   return (
-    <form action={formAction} className="space-y-3">
+    <form ref={formRef} action={formAction} className="space-y-3">
       <Field
         label="고객명"
         name="customer_name"

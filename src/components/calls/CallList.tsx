@@ -105,6 +105,13 @@ export function CallList({
 }: Props) {
   const router = useRouter();
   const [calls, setCalls] = useState<CallRow[]>(initialCalls);
+
+  // server component(CallsPage / MyCallsPage)가 재실행되어 새 initialCalls가
+  // 들어오면 client state도 동기화. realtime이 동작하지 않거나 늦는 경우
+  // router.refresh() 후 즉시 반영되도록 보장.
+  useEffect(() => {
+    setCalls(initialCalls);
+  }, [initialCalls]);
   const [filter, setFilter] = useState<"all" | "new" | "mine" | "completed" | "cancelled">("all");
   const [search, setSearch] = useState("");
   const [selectedDate, setSelectedDate] = useState("");
