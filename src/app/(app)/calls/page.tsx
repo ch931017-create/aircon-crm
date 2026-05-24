@@ -66,8 +66,11 @@ export default async function CallsPage() {
               profiles={profiles}
             />
           </div>
-          <aside className="mt-6 hidden rounded-3xl border border-slate-200 bg-white p-5 shadow-sm lg:sticky lg:top-4 lg:mt-0 lg:block">
-            <h2 className="mb-3 text-base font-semibold text-slate-900">콜 등록</h2>
+          {/* PC sticky: 좌측 콜 리스트 스크롤해도 우측 등록 카드 고정.
+              max-h + overflow-auto: 화면 짧을 때 카드 자체 스크롤로 등록 버튼 접근 보장.
+              top-4는 layout 헤더 + 여백 고려. */}
+          <aside className="mt-6 hidden rounded-3xl border border-slate-200 bg-white p-5 shadow-sm lg:sticky lg:top-4 lg:mt-0 lg:block lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto lg:p-4">
+            <h2 className="mb-2 text-base font-semibold text-slate-900">콜 등록</h2>
             <CallForm />
           </aside>
         </div>

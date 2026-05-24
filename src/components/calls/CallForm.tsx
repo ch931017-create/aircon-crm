@@ -59,9 +59,14 @@ export function CallForm({ redirectAfterSuccess }: CallFormProps = {}) {
     }
   }, [state, redirectAfterSuccess, router]);
 
+  // 시/군/구 목록을 가나다순으로 정렬 (한글 localeCompare).
+  // REGION_GROUPS 원본은 그대로 두고 표시 시점에만 정렬 — 데이터 구조 유지.
+  // sort된 옵션이면 native select의 type-to-select가 자연스럽게 동작.
   const availableDistricts = useMemo(() => {
     const group = REGION_GROUPS.find((g) => g.sido === selectedSido);
-    return group?.districts ?? [];
+    return [...(group?.districts ?? [])].sort((a, b) =>
+      a.localeCompare(b, "ko-KR"),
+    );
   }, [selectedSido]);
 
   // 날짜 + 시간 합쳐서 datetime-local 형식 ("YYYY-MM-DDTHH:00") 생성.
@@ -74,7 +79,11 @@ export function CallForm({ redirectAfterSuccess }: CallFormProps = {}) {
   }, [preferredDate, preferredHour]);
 
   return (
-    <form ref={formRef} action={formAction} className="space-y-3">
+    <form
+      ref={formRef}
+      action={formAction}
+      className="space-y-3 lg:space-y-2"
+    >
       <Field
         label="고객명"
         name="customer_name"
@@ -91,7 +100,7 @@ export function CallForm({ redirectAfterSuccess }: CallFormProps = {}) {
       />
       <Field label="주소" name="address" required error={fe.address} />
 
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid gap-3 sm:grid-cols-2 lg:gap-2">
         <label className="block">
           <span className="mb-1 block text-sm font-medium text-slate-700">
             시/도
@@ -102,7 +111,7 @@ export function CallForm({ redirectAfterSuccess }: CallFormProps = {}) {
               setSelectedSido(e.target.value);
               setSelectedDistrict("");
             }}
-            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-base outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
+            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-base outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100 lg:py-2 lg:text-sm"
           >
             <option value="">선택</option>
             {REGION_GROUPS.map((group) => (
@@ -120,10 +129,13 @@ export function CallForm({ redirectAfterSuccess }: CallFormProps = {}) {
             value={selectedDistrict}
             onChange={(e) => setSelectedDistrict(e.target.value)}
             disabled={!selectedSido}
-            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-base outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100 disabled:bg-slate-100 disabled:text-slate-400"
+            // 가나다순 정렬되어 있어 native select의 type-to-select 가능:
+            //   focus 후 "구" → 구로 시작하는 첫 항목으로 이동, Enter로 확정
+            //   "구리" 연속 입력 (브라우저 type-buffer ~1s) → 구리시로 이동
+            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-base outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100 disabled:bg-slate-100 disabled:text-slate-400 lg:py-2 lg:text-sm"
           >
             <option value="">
-              {selectedSido ? "선택" : "시/도를 먼저 선택"}
+              {selectedSido ? "선택 (타이핑으로 검색)" : "시/도를 먼저 선택"}
             </option>
             {availableDistricts.map((d) => (
               <option key={d} value={d}>
@@ -147,13 +159,13 @@ export function CallForm({ redirectAfterSuccess }: CallFormProps = {}) {
             type="date"
             value={preferredDate}
             onChange={(e) => setPreferredDate(e.target.value)}
-            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-base outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
+            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-base outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100 lg:py-2 lg:text-sm"
           />
           <select
             value={preferredHour}
             onChange={(e) => setPreferredHour(e.target.value)}
             disabled={!preferredDate}
-            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-base outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100 disabled:bg-slate-100 disabled:text-slate-400"
+            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-base outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100 disabled:bg-slate-100 disabled:text-slate-400 lg:py-2 lg:text-sm"
           >
             <option value="">
               {preferredDate ? "시간 선택" : "날짜를 먼저 선택"}
@@ -222,8 +234,9 @@ function Field({
   inputMode,
   step,
 }: FieldProps) {
+  // 모바일은 기존 padding/font 그대로, lg(데스크탑)에서만 컴팩트
   const cls =
-    "w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-base outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100";
+    "w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-base outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100 lg:py-2 lg:text-sm";
   return (
     <label className="block">
       <span className="mb-1 block text-sm font-medium text-slate-700">
@@ -235,8 +248,9 @@ function Field({
           name={name}
           required={required}
           placeholder={placeholder}
+          // 모바일 rows, PC는 한 줄 더 짧게
           rows={rows ?? 2}
-          className={cls}
+          className={`${cls} lg:min-h-0`}
         />
       ) : (
         <input
@@ -260,7 +274,7 @@ function SubmitButton() {
     <button
       type="submit"
       disabled={pending}
-      className="w-full rounded-xl bg-brand-600 px-4 py-3 text-base font-medium text-white shadow-sm transition disabled:opacity-60 hover:bg-brand-700"
+      className="w-full rounded-xl bg-brand-600 px-4 py-3 text-base font-medium text-white shadow-sm transition disabled:opacity-60 hover:bg-brand-700 lg:py-2.5 lg:text-sm"
     >
       {pending ? "등록 중..." : "콜 등록"}
     </button>
