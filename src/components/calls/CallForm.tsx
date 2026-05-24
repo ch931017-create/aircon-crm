@@ -61,13 +61,90 @@ export function CallForm({ redirectAfterSuccess }: CallFormProps = {}) {
 
   // 시/군/구 목록을 가나다순으로 정렬 (한글 localeCompare).
   // REGION_GROUPS 원본은 그대로 두고 표시 시점에만 정렬 — 데이터 구조 유지.
-  // sort된 옵션이면 native select의 type-to-select가 자연스럽게 동작.
   const availableDistricts = useMemo(() => {
     const group = REGION_GROUPS.find((g) => g.sido === selectedSido);
     return [...(group?.districts ?? [])].sort((a, b) =>
       a.localeCompare(b, "ko-KR"),
     );
   }, [selectedSido]);
+
+  // ─────────────────────────────────────────────────────────
+  // 시/군/구 검색 combobox 상태
+  //   - native select의 한글 type-to-select가 IME 조합에서 불안정해서
+  //     input + dropdown 패턴으로 교체. "구리" 타이핑 → 구리시 필터링.
+  //   - form submit은 기존 hidden input name="district" 그대로 사용.
+  // ─────────────────────────────────────────────────────────
+  const [districtQuery, setDistrictQuery] = useState<string>("");
+  const [districtListOpen, setDistrictListOpen] = useState<boolean>(false);
+  const [districtHighlight, setDistrictHighlight] = useState<number>(0);
+  const districtListRef = useRef<HTMLUListElement>(null);
+
+  // 사용자 입력 query로 필터링 (부분 일치)
+  const filteredDistricts = useMemo(() => {
+    const q = districtQuery.trim();
+    if (!q) return availableDistricts;
+    return availableDistricts.filter((d) => d.includes(q));
+  }, [availableDistricts, districtQuery]);
+
+  // 시/도 변경 시 시/군/구 관련 상태 reset
+  useEffect(() => {
+    setSelectedDistrict("");
+    setDistrictQuery("");
+    setDistrictListOpen(false);
+    setDistrictHighlight(0);
+  }, [selectedSido]);
+
+  // 필터 변경 시 highlight 0으로 복귀
+  useEffect(() => {
+    setDistrictHighlight(0);
+  }, [districtQuery]);
+
+  // highlight 변경 시 list 안에서 보이도록 scroll
+  useEffect(() => {
+    if (!districtListOpen) return;
+    const el = districtListRef.current?.children[districtHighlight] as
+      | HTMLElement
+      | undefined;
+    el?.scrollIntoView({ block: "nearest" });
+  }, [districtHighlight, districtListOpen]);
+
+  function selectDistrict(value: string) {
+    setSelectedDistrict(value);
+    setDistrictQuery(value);
+    setDistrictListOpen(false);
+  }
+
+  function handleDistrictKeyDown(
+    e: React.KeyboardEvent<HTMLInputElement>,
+  ): void {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setDistrictListOpen(true);
+      setDistrictHighlight((i) =>
+        Math.min(i + 1, Math.max(0, filteredDistricts.length - 1)),
+      );
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setDistrictListOpen(true);
+      setDistrictHighlight((i) => Math.max(i - 1, 0));
+    } else if (e.key === "Enter") {
+      if (districtListOpen && filteredDistricts[districtHighlight]) {
+        e.preventDefault();
+        selectDistrict(filteredDistricts[districtHighlight]);
+      }
+    } else if (e.key === "Escape") {
+      setDistrictListOpen(false);
+    }
+  }
+
+  function handleDistrictBlur(): void {
+    // dropdown 항목 mousedown으로 선택 처리한 직후 blur가 와도 안전하게 닫음.
+    // 입력 후 항목 선택 안 했으면 마지막 selectedDistrict로 input 복원.
+    window.setTimeout(() => {
+      setDistrictListOpen(false);
+      setDistrictQuery(selectedDistrict);
+    }, 150);
+  }
 
   // 날짜 + 시간 합쳐서 datetime-local 형식 ("YYYY-MM-DDTHH:00") 생성.
   // 둘 중 하나라도 비어있으면 빈 문자열 → server action에서 null 처리됨.
@@ -121,28 +198,70 @@ export function CallForm({ redirectAfterSuccess }: CallFormProps = {}) {
             ))}
           </select>
         </label>
-        <label className="block">
+        <label className="relative block">
           <span className="mb-1 block text-sm font-medium text-slate-700">
             시/군/구
           </span>
-          <select
-            value={selectedDistrict}
-            onChange={(e) => setSelectedDistrict(e.target.value)}
+          <input
+            type="text"
+            value={districtQuery}
+            onChange={(e) => {
+              setDistrictQuery(e.target.value);
+              setSelectedDistrict(""); // typing 시 임시 무효화 — 항목 선택해야 확정
+              setDistrictListOpen(true);
+            }}
+            onFocus={() => setDistrictListOpen(true)}
+            onClick={() => setDistrictListOpen(true)}
+            onBlur={handleDistrictBlur}
+            onKeyDown={handleDistrictKeyDown}
             disabled={!selectedSido}
-            // 가나다순 정렬되어 있어 native select의 type-to-select 가능:
-            //   focus 후 "구" → 구로 시작하는 첫 항목으로 이동, Enter로 확정
-            //   "구리" 연속 입력 (브라우저 type-buffer ~1s) → 구리시로 이동
+            placeholder={
+              selectedSido ? "시/군/구 검색 (예: 구리)" : "시/도를 먼저 선택"
+            }
+            autoComplete="off"
+            spellCheck={false}
+            role="combobox"
+            aria-autocomplete="list"
+            aria-expanded={districtListOpen}
+            aria-controls="district-listbox"
             className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-base outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100 disabled:bg-slate-100 disabled:text-slate-400 lg:py-2 lg:text-sm"
-          >
-            <option value="">
-              {selectedSido ? "선택 (타이핑으로 검색)" : "시/도를 먼저 선택"}
-            </option>
-            {availableDistricts.map((d) => (
-              <option key={d} value={d}>
-                {d}
-              </option>
-            ))}
-          </select>
+          />
+          {districtListOpen && selectedSido && filteredDistricts.length > 0 && (
+            <ul
+              ref={districtListRef}
+              id="district-listbox"
+              role="listbox"
+              className="absolute left-0 right-0 top-full z-30 mt-1 max-h-60 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-lg"
+            >
+              {filteredDistricts.map((d, i) => (
+                <li
+                  key={d}
+                  role="option"
+                  aria-selected={i === districtHighlight}
+                  // mousedown으로 처리 → input의 blur 발생 전 선택 완료
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    selectDistrict(d);
+                  }}
+                  onMouseEnter={() => setDistrictHighlight(i)}
+                  className={
+                    i === districtHighlight
+                      ? "cursor-pointer px-3 py-2 text-sm bg-brand-100 text-brand-700"
+                      : "cursor-pointer px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
+                  }
+                >
+                  {d}
+                </li>
+              ))}
+            </ul>
+          )}
+          {districtListOpen &&
+            selectedSido &&
+            filteredDistricts.length === 0 && (
+              <div className="absolute left-0 right-0 top-full z-30 mt-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-500 shadow-lg">
+                일치하는 시/군/구가 없습니다
+              </div>
+            )}
         </label>
         {/* DB에는 시/군/구 단일 값만 저장 (기존 호환). action에서 district 필드로 받음 */}
         <input type="hidden" name="district" value={selectedDistrict} />
