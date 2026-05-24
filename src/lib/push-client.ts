@@ -61,12 +61,25 @@ export async function subscribeUserToPush(): Promise<{
 }> {
   console.log("[push] start subscribe");
 
+  // 모든 브라우저 API 존재 검사 — 순서: window → navigator → serviceWorker → PushManager → Notification
   if (typeof window === "undefined") {
     console.log("[push] abort: ssr");
     return { ok: false, reason: "ssr" };
   }
-  if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
-    console.log("[push] abort: unsupported");
+  if (typeof navigator === "undefined") {
+    console.log("[push] abort: navigator undefined");
+    return { ok: false, reason: "unsupported" };
+  }
+  if (!("serviceWorker" in navigator)) {
+    console.log("[push] abort: serviceWorker not in navigator");
+    return { ok: false, reason: "unsupported" };
+  }
+  if (!("PushManager" in window)) {
+    console.log("[push] abort: PushManager not in window");
+    return { ok: false, reason: "unsupported" };
+  }
+  if (typeof Notification === "undefined") {
+    console.log("[push] abort: Notification undefined");
     return { ok: false, reason: "unsupported" };
   }
 
@@ -156,39 +169,65 @@ export async function subscribeUserToPush(): Promise<{
 }
 
 export async function unsubscribeUserFromPush(): Promise<boolean> {
-  if (typeof window === "undefined") return false;
-  if (!("serviceWorker" in navigator)) return false;
-
-  const registration = await navigator.serviceWorker.ready;
-  const subscription = await registration.pushManager.getSubscription();
-  if (!subscription) return true;
-
-  const endpoint = subscription.endpoint;
-
   try {
-    await subscription.unsubscribe();
-  } catch {
-    // 일부 브라우저에서 실패 가능, 서버 삭제는 계속 시도
+    if (typeof window === "undefined") return false;
+    if (typeof navigator === "undefined") return false;
+    if (!("serviceWorker" in navigator)) return false;
+
+    const registration = await withTimeout(
+      navigator.serviceWorker.ready,
+      TIMEOUT_SW_READY,
+      "SW_READY",
+    );
+    const subscription = await registration.pushManager.getSubscription();
+    if (!subscription) return true;
+
+    const endpoint = subscription.endpoint;
+
+    try {
+      await subscription.unsubscribe();
+    } catch {
+      // 일부 브라우저에서 실패 가능, 서버 삭제는 계속 시도
+    }
+
+    await fetch("/api/push/unsubscribe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ endpoint }),
+    }).catch(() => {});
+
+    return true;
+  } catch (err) {
+    console.warn("[push] unsubscribe failed:", err);
+    return false;
   }
-
-  await fetch("/api/push/unsubscribe", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ endpoint }),
-  }).catch(() => {});
-
-  return true;
 }
 
+// 어떤 환경에서도 throw하지 않음. 알 수 없는 브라우저는 "unsupported" 반환.
 export function getPushPermissionState():
   | NotificationPermission
   | "unsupported" {
-  if (typeof window === "undefined") return "default";
-  if (typeof Notification === "undefined") return "unsupported";
-  return Notification.permission;
+  try {
+    if (typeof window === "undefined") return "default";
+    if (typeof Notification === "undefined") return "unsupported";
+    return Notification.permission;
+  } catch (err) {
+    console.warn("[push] getPushPermissionState exception:", err);
+    return "unsupported";
+  }
 }
 
+// 어떤 환경에서도 throw하지 않음.
 export function isPushSupported(): boolean {
-  if (typeof window === "undefined") return false;
-  return "serviceWorker" in navigator && "PushManager" in window;
+  try {
+    if (typeof window === "undefined") return false;
+    if (typeof navigator === "undefined") return false;
+    if (!("serviceWorker" in navigator)) return false;
+    if (!("PushManager" in window)) return false;
+    if (typeof Notification === "undefined") return false;
+    return true;
+  } catch (err) {
+    console.warn("[push] isPushSupported exception:", err);
+    return false;
+  }
 }
