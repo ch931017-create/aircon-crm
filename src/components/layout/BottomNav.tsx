@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
+  Bell,
   ClipboardList,
   FileText,
   ListChecks,
@@ -31,6 +32,7 @@ function itemsFor(role: UserRole): NavItem[] {
   if (role === "technician") {
     base.push({ href: "/my-calls", label: "내콜", Icon: ListChecks });
     base.push({ href: "/my-settlements", label: "정산", Icon: Wallet });
+    base.push({ href: "/settings", label: "알림", Icon: Bell });
   }
 
   if (role === "dispatcher" || role === "admin") {
@@ -41,6 +43,7 @@ function itemsFor(role: UserRole): NavItem[] {
       Icon: FileText,
     });
     base.push({ href: "/calls/trash", label: "휴지통", Icon: Trash2 });
+    base.push({ href: "/settings", label: "알림", Icon: Bell });
   }
 
   if (role === "admin") {

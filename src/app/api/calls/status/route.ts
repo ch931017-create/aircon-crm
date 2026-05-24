@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { insertMessageLog, buildHappyCallMessage } from "@/lib/notifications";
+import { sendPushToProfiles } from "@/lib/web-push";
 
 const ALLOWED_STATUSES = ["new", "assigned", "completed", "cancelled"] as const;
 
@@ -29,8 +30,40 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 400 });
   }
 
-  // 작업완료 시 해피콜 로그 생성 (비동기)
+  // 작업완료 시 push 알림 + 해피콜 로그 생성
   if (status === "completed") {
+    // notify_completion=true인 admin/dispatcher에게 push (운영 정책: opt-out 가능)
+    try {
+      const { data: receivers } = await supabase
+        .from("profiles")
+        .select("id")
+        .in("role", ["admin", "dispatcher"])
+        .eq("notify_completion", true)
+        .eq("is_active", true);
+
+      if (receivers && receivers.length > 0) {
+        const { data: call } = await supabase
+          .from("calls")
+          .select("customer_name, district")
+          .eq("id", callId)
+          .maybeSingle();
+        const body = call
+          ? `${call.district ?? "지역미정"} · ${call.customer_name} 완료 처리됨`
+          : "콜이 완료되었습니다";
+        await sendPushToProfiles(
+          receivers.map((r) => r.id as string),
+          {
+            title: "콜 완료",
+            body,
+            url: `/calls/${callId}`,
+            tag: `call-${callId}-complete`,
+          },
+        );
+      }
+    } catch {
+      // push 실패는 무시 — 완료 처리 자체는 성공
+    }
+
     try {
       const { data: callRow } = await supabase.from("calls").select("id, customer_name, phone, assigned_to").eq("id", callId).maybeSingle();
 

@@ -213,6 +213,19 @@ const cards = [
             확인
           </a>
         </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div>
+            <h2 className="text-base font-semibold">알림 설정</h2>
+            <p className="text-sm text-slate-500">푸시 알림 / 완료 알림 ON·OFF 설정</p>
+          </div>
+          <a
+            href="/settings"
+            className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
+          >
+            이동
+          </a>
+        </div>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">

@@ -4,6 +4,7 @@ import { Header } from "@/components/layout/Header";
 import { BottomNav } from "@/components/layout/BottomNav";
 import { PWAInstallPrompt } from "@/components/layout/PWAInstallPrompt";
 import { LocationUpdater } from "@/components/layout/LocationUpdater";
+import { PushManager } from "@/components/layout/PushManager";
 
 export default async function AppLayout({
   children,
@@ -30,6 +31,7 @@ export default async function AppLayout({
       <PWAInstallPrompt />
       <BottomNav role={user.profile.role} />
       {user.profile.role === "technician" ? <LocationUpdater /> : null}
+      <PushManager />
     </div>
   );
 }

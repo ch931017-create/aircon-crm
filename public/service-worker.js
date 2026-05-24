@@ -177,33 +177,59 @@ self.addEventListener("sync", (event) => {
 });
 
 self.addEventListener("push", (event) => {
-  const data = event.data ? event.data.json() : {};
-  const title = data.title || "에어컨 콜풀 CRM";
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch (_) {
+    // payload가 JSON이 아니면 빈 객체로 fallback
+  }
+  const title = data.title || "출장시민";
+  const targetUrl = typeof data.url === "string" ? data.url : "/";
   const options = {
     body: data.body || "새 알림이 있습니다.",
     icon: "/icon-192x192.png",
     badge: "/icon-192x192.png",
-    tag: "call-notification",
+    tag: data.tag || "default",
+    data: { url: targetUrl },
     requireInteraction: false,
   };
-
   event.waitUntil(self.registration.showNotification(title, options));
 });
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
+  const targetUrl = (event.notification.data && event.notification.data.url) || "/";
+
   event.waitUntil(
-    clients
-      .matchAll({ type: "window", includeUncontrolled: true })
-      .then((clientList) => {
-        for (const client of clientList) {
-          if (client.url === "/" && "focus" in client) {
-            return client.focus();
-          }
-        }
-        if (clients.openWindow) {
-          return clients.openWindow("/");
-        }
-      }),
+    (async () => {
+      const allClients = await clients.matchAll({
+        type: "window",
+        includeUncontrolled: true,
+      });
+
+      // 이미 열려있는 같은 경로 탭이 있으면 포커스
+      const matched = allClients.find(
+        (client) => client.url.includes(targetUrl) && "focus" in client,
+      );
+      if (matched) {
+        await matched.focus();
+        return;
+      }
+
+      // 같은 origin의 다른 탭이 있으면 그 탭으로 navigate
+      const sameOrigin = allClients.find((client) =>
+        client.url.startsWith(self.location.origin),
+      );
+      if (sameOrigin && "navigate" in sameOrigin) {
+        await sameOrigin.navigate(targetUrl);
+        await sameOrigin.focus();
+        return;
+      }
+
+      // 새 탭 열기
+      if (clients.openWindow) {
+        await clients.openWindow(targetUrl);
+      }
+    })(),
   );
 });

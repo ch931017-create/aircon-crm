@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { sendHappyCallSms } from "@/lib/sms";
+import { sendPushToProfiles } from "@/lib/web-push";
 
 function createHappyCallToken() {
   return crypto.randomUUID().replaceAll("-", "");
@@ -111,6 +112,39 @@ export async function POST(request: NextRequest) {
       phone,
       url: happyCallUrl,
     });
+  }
+
+  // 콜 완료 push: notify_completion=true인 admin/dispatcher에게 (운영 정책: opt-out 가능)
+  // settlement API는 항상 status='completed'로 전환하므로 매번 발송 대상
+  try {
+    const { data: receivers } = await supabase
+      .from("profiles")
+      .select("id")
+      .in("role", ["admin", "dispatcher"])
+      .eq("notify_completion", true)
+      .eq("is_active", true);
+
+    if (receivers && receivers.length > 0) {
+      const { data: call } = await supabase
+        .from("calls")
+        .select("customer_name, district")
+        .eq("id", callId)
+        .maybeSingle();
+      const body = call
+        ? `${call.district ?? "지역미정"} · ${call.customer_name} 완료 처리됨`
+        : "콜이 완료되었습니다";
+      await sendPushToProfiles(
+        receivers.map((r) => r.id as string),
+        {
+          title: "콜 완료",
+          body,
+          url: `/calls/${callId}`,
+          tag: `call-${callId}-complete`,
+        },
+      );
+    }
+  } catch {
+    // push 실패는 무시 — 정산 저장 자체는 성공
   }
 
   return NextResponse.json({

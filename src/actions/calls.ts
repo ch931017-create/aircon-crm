@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createCallSchema } from "@/lib/schemas";
 import { geocodeAddress } from "@/lib/geocoding";
+import { sendPushToProfile } from "@/lib/web-push";
 
 export interface CreateCallState {
   error?: string;
@@ -114,6 +115,27 @@ export async function assignCallAction(
         ? "이미 다른 기사에게 배정되었습니다."
         : `배정 실패: ${error.message}`;
     return { error: message };
+  }
+
+  // 배정된 기사에게 push (technician은 알림 OFF 불가 — 운영 정책)
+  // sendPushToProfile은 throw하지 않으므로 redirect 흐름에 영향 없음
+  try {
+    const { data: call } = await supabase
+      .from("calls")
+      .select("customer_name, address, district")
+      .eq("id", callId)
+      .maybeSingle();
+    const body = call
+      ? `${call.district ?? "지역미정"} · ${call.customer_name} (${call.address})`
+      : "새 콜이 배정되었습니다";
+    await sendPushToProfile(technicianId, {
+      title: "새 콜 배정",
+      body,
+      url: `/calls/${callId}`,
+      tag: `call-${callId}-assigned`,
+    });
+  } catch {
+    // push 실패는 무시 — 배정 자체는 성공
   }
 
   revalidatePath(`/calls/${callId}`);

@@ -49,6 +49,7 @@ export interface ProfileRow {
   current_lat: number | null;
   current_lng: number | null;
   location_updated_at: string | null;
+  notify_completion: boolean;
   [key: string]: unknown;
 }
 
@@ -117,6 +118,7 @@ interface ProfileInsert {
   current_lat?: number | null;
   current_lng?: number | null;
   location_updated_at?: string | null;
+  notify_completion?: boolean;
   [key: string]: unknown;
 }
 
@@ -133,6 +135,7 @@ interface ProfileUpdate {
   current_lat?: number | null;
   current_lng?: number | null;
   location_updated_at?: string | null;
+  notify_completion?: boolean;
   [key: string]: unknown;
 }
 
@@ -240,6 +243,42 @@ interface CallUpdate {
   [key: string]: unknown;
 }
 
+export interface PushSubscriptionRow {
+  id: string;
+  profile_id: string;
+  endpoint: string;
+  p256dh: string;
+  auth: string;
+  user_agent: string | null;
+  created_at: string;
+  last_used_at: string | null;
+  [key: string]: unknown;
+}
+
+interface PushSubscriptionInsert {
+  id?: string;
+  profile_id: string;
+  endpoint: string;
+  p256dh: string;
+  auth: string;
+  user_agent?: string | null;
+  created_at?: string;
+  last_used_at?: string | null;
+  [key: string]: unknown;
+}
+
+interface PushSubscriptionUpdate {
+  id?: string;
+  profile_id?: string;
+  endpoint?: string;
+  p256dh?: string;
+  auth?: string;
+  user_agent?: string | null;
+  created_at?: string;
+  last_used_at?: string | null;
+  [key: string]: unknown;
+}
+
 export type Database = {
   public: {
     Tables: {
@@ -253,6 +292,12 @@ export type Database = {
         Row: CallRow;
         Insert: CallInsert;
         Update: CallUpdate;
+        Relationships: [];
+      };
+      push_subscriptions: {
+        Row: PushSubscriptionRow;
+        Insert: PushSubscriptionInsert;
+        Update: PushSubscriptionUpdate;
         Relationships: [];
       };
     };
