@@ -7,6 +7,12 @@ import { REGION_GROUPS } from "@/lib/regions";
 
 const initial: CreateCallState = {};
 
+// 콜 등록 시 선택 가능한 정시 시간대 (운영 시간 09:00 ~ 21:00)
+const HOUR_OPTIONS: string[] = Array.from({ length: 13 }, (_, i) => {
+  const hour = 9 + i;
+  return `${String(hour).padStart(2, "0")}:00`;
+});
+
 export function CallForm() {
   const [state, formAction] = useFormState(createCallAction, initial);
   const fe = state.fieldErrors ?? {};
@@ -14,10 +20,22 @@ export function CallForm() {
   const [selectedSido, setSelectedSido] = useState<string>("");
   const [selectedDistrict, setSelectedDistrict] = useState<string>("");
 
+  const [preferredDate, setPreferredDate] = useState<string>("");
+  const [preferredHour, setPreferredHour] = useState<string>("");
+
   const availableDistricts = useMemo(() => {
     const group = REGION_GROUPS.find((g) => g.sido === selectedSido);
     return group?.districts ?? [];
   }, [selectedSido]);
+
+  // 날짜 + 시간 합쳐서 datetime-local 형식 ("YYYY-MM-DDTHH:00") 생성.
+  // 둘 중 하나라도 비어있으면 빈 문자열 → server action에서 null 처리됨.
+  // server action(actions/calls.ts)에서 이 문자열을 new Date()로 파싱하여
+  // 로컬(KST) timezone으로 해석 후 ISO로 저장. 기존 호환 100%.
+  const combinedPreferredTime = useMemo(() => {
+    if (!preferredDate || !preferredHour) return "";
+    return `${preferredDate}T${preferredHour}`;
+  }, [preferredDate, preferredHour]);
 
   return (
     <form action={formAction} className="space-y-3">
@@ -84,12 +102,43 @@ export function CallForm() {
 
       <Field label="증상" name="symptom" textarea rows={2} />
 
-      <Field
-        label="고객 희망 일시 (정시 단위)"
-        name="preferred_time"
-        type="datetime-local"
-        step={3600}
-      />
+      <div>
+        <span className="mb-1 block text-sm font-medium text-slate-700">
+          고객 희망 일시
+        </span>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <input
+            type="date"
+            value={preferredDate}
+            onChange={(e) => setPreferredDate(e.target.value)}
+            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-base outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
+          />
+          <select
+            value={preferredHour}
+            onChange={(e) => setPreferredHour(e.target.value)}
+            disabled={!preferredDate}
+            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-base outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100 disabled:bg-slate-100 disabled:text-slate-400"
+          >
+            <option value="">
+              {preferredDate ? "시간 선택" : "날짜를 먼저 선택"}
+            </option>
+            {HOUR_OPTIONS.map((h) => (
+              <option key={h} value={h}>
+                {h}
+              </option>
+            ))}
+          </select>
+        </div>
+        {/* 서버 호환: 기존 preferred_time 필드명에 datetime-local 형식으로 합쳐 전송 */}
+        <input
+          type="hidden"
+          name="preferred_time"
+          value={combinedPreferredTime}
+        />
+        <p className="mt-1 text-xs text-slate-500">
+          운영 시간 09:00 ~ 21:00 중 선택. 비워두면 미정으로 저장됩니다.
+        </p>
+      </div>
 
       <Field
         label="예상 금액 (원)"
