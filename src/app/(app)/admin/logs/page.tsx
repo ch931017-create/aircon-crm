@@ -131,11 +131,52 @@ if (technicianIds.length > 0) {
   logs = data;
 }
 
+  const tabs: Array<{ key: string; label: string; href: string }> = [
+    { key: "", label: "전체", href: "/admin/logs" },
+    {
+      key: "happy_call_unanswered",
+      label: "해피콜 미완료",
+      href: "/admin/logs?type=happy_call_unanswered",
+    },
+    {
+      key: "happy_call_answered",
+      label: "해피콜 완료",
+      href: "/admin/logs?type=happy_call_answered",
+    },
+    {
+      key: "amount_mismatch",
+      label: "금액 불일치",
+      href: "/admin/logs?type=amount_mismatch",
+    },
+    {
+      key: "happy_call",
+      label: "해피콜 메시지",
+      href: "/admin/logs?type=happy_call",
+    },
+  ];
+  const activeTabKey = typeFilter ?? "";
+
   return (
     <section className="space-y-6">
       <div>
         <h1 className="text-xl font-bold">메시지 / 해피콜 로그</h1>
         <p className="mt-2 text-sm text-slate-500">발송 예정 로그와 해피콜 상태를 확인합니다.</p>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        {tabs.map((tab) => (
+          <Link
+            key={tab.key || "all"}
+            href={tab.href}
+            className={
+              activeTabKey === tab.key
+                ? "rounded-full bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white"
+                : "rounded-full border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+            }
+          >
+            {tab.label}
+          </Link>
+        ))}
       </div>
 
       <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">

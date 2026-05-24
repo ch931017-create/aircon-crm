@@ -415,7 +415,7 @@ export function CallList({
 
   return (
     <div className="space-y-4">
-      <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm lg:sticky lg:top-2 lg:z-10">
         {filterMine ? (
           <div className="space-y-3">
             <div className="flex items-center justify-between gap-3">
@@ -668,7 +668,7 @@ export function CallList({
             return (
               <details
   key={call.id}
-  className={`group overflow-hidden rounded-[28px] border shadow-sm transition active:scale-[0.995] ${
+  className={`group overflow-hidden rounded-2xl border shadow-sm transition active:scale-[0.995] lg:rounded-[28px] ${
     call.status === "completed"
       ? "border-emerald-200 bg-emerald-50"
       : call.status === "new"
@@ -676,23 +676,28 @@ export function CallList({
         : "border-slate-200 bg-white"
   }`}
 >
-                <summary className="grid gap-2 px-3 py-2.5 text-[13px] text-slate-700 transition sm:grid-cols-[1.7fr_1.3fr_1fr_1fr_0.8fr_0.9fr] sm:items-center">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-bold text-slate-900">
-  {call.district ?? "지역 미정"}
-</p>
-                    <p className="truncate text-xs text-slate-500">
-  {call.address}
-</p>
+                <summary className="grid gap-x-3 gap-y-1 px-3 py-2 text-[13px] text-slate-700 transition grid-cols-2 sm:grid-cols-[1.7fr_1.3fr_1fr_1fr_0.8fr_0.9fr] sm:items-center sm:gap-2 sm:py-2.5 lg:py-1.5">
+                  <div className="col-span-2 min-w-0 sm:col-span-1">
+                    <p className="flex items-baseline gap-1.5">
+                      <span className="truncate text-sm font-bold text-slate-900">
+                        {call.district ?? "지역 미정"}
+                      </span>
+                      <span className="truncate text-xs text-slate-500 sm:hidden">
+                        {call.address}
+                      </span>
+                    </p>
+                    <p className="hidden truncate text-xs text-slate-500 sm:block">
+                      {call.address}
+                    </p>
                     {distance != null && (
-                      <p className="mt-1 text-xs text-slate-400">{distance.toFixed(1)}km</p>
+                      <p className="mt-0.5 text-xs text-slate-400">{distance.toFixed(1)}km</p>
                     )}
                   </div>
-                  <div className="min-w-0">
+                  <div className="col-span-2 min-w-0 text-xs text-slate-600 sm:col-span-1 sm:text-[13px]">
                     <p className="truncate">{call.symptom ?? "증상 없음"}</p>
                   </div>
-                  <div>{formatPreferredTime(call.preferred_time)}</div>
-                  <div>{call.estimated_amount != null ? formatKRW(call.estimated_amount) : "-"}</div>
+                  <div className="text-xs sm:text-[13px]">{formatPreferredTime(call.preferred_time)}</div>
+                  <div className="text-xs font-medium sm:text-[13px]">{call.estimated_amount != null ? formatKRW(call.estimated_amount) : "-"}</div>
                <div>
   <div className="flex flex-wrap items-center gap-1">
     <StatusBadge status={call.status} />

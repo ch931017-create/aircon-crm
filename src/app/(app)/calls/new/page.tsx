@@ -7,7 +7,7 @@ export default async function NewCallPage() {
   await requireRole("dispatcher", "admin");
 
   return (
-    <section className="space-y-4">
+    <section className="mx-auto w-full max-w-2xl space-y-4">
       <h1 className="text-xl font-bold">콜 등록</h1>
       <CallForm />
     </section>

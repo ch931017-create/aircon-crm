@@ -27,7 +27,7 @@ export default async function CallDetailPage({
     : null;
 
   return (
-    <section className="space-y-6">
+    <section className="mx-auto w-full max-w-4xl space-y-6">
       <CallDetail
         call={callData as CallRow}
         currentUserId={user.id}

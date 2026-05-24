@@ -1,41 +1,23 @@
 "use client";
 
+import { useMemo, useState } from "react";
 import { useFormState, useFormStatus } from "react-dom";
 import { createCallAction, type CreateCallState } from "@/actions/calls";
+import { REGION_GROUPS } from "@/lib/regions";
 
 const initial: CreateCallState = {};
-
-const DISTRICTS = [
-  "강남구",
-  "강동구",
-  "강북구",
-  "강서구",
-  "관악구",
-  "광진구",
-  "구로구",
-  "금천구",
-  "노원구",
-  "도봉구",
-  "동대문구",
-  "동작구",
-  "마포구",
-  "서대문구",
-  "서초구",
-  "성동구",
-  "성북구",
-  "송파구",
-  "양천구",
-  "영등포구",
-  "용산구",
-  "은평구",
-  "종로구",
-  "중구",
-  "중랑구",
-];
 
 export function CallForm() {
   const [state, formAction] = useFormState(createCallAction, initial);
   const fe = state.fieldErrors ?? {};
+
+  const [selectedSido, setSelectedSido] = useState<string>("");
+  const [selectedDistrict, setSelectedDistrict] = useState<string>("");
+
+  const availableDistricts = useMemo(() => {
+    const group = REGION_GROUPS.find((g) => g.sido === selectedSido);
+    return group?.districts ?? [];
+  }, [selectedSido]);
 
   return (
     <form action={formAction} className="space-y-3">
@@ -55,23 +37,50 @@ export function CallForm() {
       />
       <Field label="주소" name="address" required error={fe.address} />
 
-      <label className="block">
-        <span className="mb-1 block text-sm font-medium text-slate-700">
-          지역구
-        </span>
-        <select
-          name="district"
-          defaultValue=""
-          className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-base outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
-        >
-          <option value="">선택</option>
-          {DISTRICTS.map((d) => (
-            <option key={d} value={d}>
-              {d}
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="block">
+          <span className="mb-1 block text-sm font-medium text-slate-700">
+            시/도
+          </span>
+          <select
+            value={selectedSido}
+            onChange={(e) => {
+              setSelectedSido(e.target.value);
+              setSelectedDistrict("");
+            }}
+            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-base outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
+          >
+            <option value="">선택</option>
+            {REGION_GROUPS.map((group) => (
+              <option key={group.sido} value={group.sido}>
+                {group.sido}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="block">
+          <span className="mb-1 block text-sm font-medium text-slate-700">
+            시/군/구
+          </span>
+          <select
+            value={selectedDistrict}
+            onChange={(e) => setSelectedDistrict(e.target.value)}
+            disabled={!selectedSido}
+            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-base outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100 disabled:bg-slate-100 disabled:text-slate-400"
+          >
+            <option value="">
+              {selectedSido ? "선택" : "시/도를 먼저 선택"}
             </option>
-          ))}
-        </select>
-      </label>
+            {availableDistricts.map((d) => (
+              <option key={d} value={d}>
+                {d}
+              </option>
+            ))}
+          </select>
+        </label>
+        {/* DB에는 시/군/구 단일 값만 저장 (기존 호환). action에서 district 필드로 받음 */}
+        <input type="hidden" name="district" value={selectedDistrict} />
+      </div>
 
       <Field label="증상" name="symptom" textarea rows={2} />
 

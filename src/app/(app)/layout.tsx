@@ -23,9 +23,9 @@ export default async function AppLayout({
   return (
     <div className="flex min-h-screen flex-col bg-slate-50">
       <Header profile={user.profile} />
-      <div className="mx-auto w-full max-w-screen-md flex-1 px-4 pb-24 pt-4">
-      {children}
-    </div>
+      <div className="mx-auto w-full max-w-screen-md flex-1 px-4 pb-24 pt-4 lg:max-w-screen-2xl lg:px-6">
+        {children}
+      </div>
       <PWAInstallPrompt />
       <BottomNav role={user.profile.role} />
     </div>

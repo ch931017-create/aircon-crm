@@ -583,3 +583,200 @@ npm run build
 - 기존 RLS의 `calls` 정책
 - `signInAction` (로그인 후 layout 가드가 자연스럽게 잡음)
 
+---
+---
+
+# 추가 작업 요약 — 지역 확장 / PC split / 카드 슬림 / 해피콜 진입점
+
+작업일: 2026-05-24
+대상 프로젝트: 출장 에어컨 수리 CRM "출장시민" (Next.js 14 App Router + Supabase)
+배포 URL: https://aircon-crm-prod.vercel.app
+
+---
+
+## 1. 변경 목적
+
+| # | 요구 | 처리 |
+|---|---|---|
+| 1 | 지역 범위 확장 (서울 → 경기 / 인천) | 2단계 select (시/도 → 시/군/구), 데이터 상수 분리 |
+| 2 | 콜직원 PC 전용 split 레이아웃 | `/calls`에 PC 한정 좌측 리스트 + 우측 등록 폼 |
+| 3 | 기사앱 콜카드 슬림화 | CallList 모바일 컴팩트 (radius/padding/grid 압축) |
+| 5 | 관리자 해피콜 진입점 강화 | 대시보드 카드 + 미완료/불일치 카운트 + logs 탭 |
+
+> 작업 4 (콜 삭제 soft delete), 6 (Web Push)는 별도 세션에서 진행 예정.
+
+---
+
+## 2. 작업 1: 지역 범위 확장
+
+### 2-1. 데이터 구조 분석
+- DB의 `calls.district`는 단순 text 컬럼 (enum / constraint 아님). DB 변경 불필요
+- 입력은 `CallForm.tsx`의 `DISTRICTS` 배열 1개에서만 옴 (서울 25구)
+- 표시/검색은 7개 파일에서 자유 문자열로 사용 → 옵션 늘려도 회귀 없음
+- 콜 수정 페이지는 없음 → 영향 범위 축소
+
+### 2-2. 신규 — `src/lib/regions.ts`
+```ts
+export const REGION_GROUPS: RegionGroup[] = [
+  { sido: "서울", districts: [25개 구] },
+  { sido: "경기", districts: [31개 시·군] },
+  { sido: "인천", districts: [10개 군·구] },
+];
+export const ALL_DISTRICTS: string[] = REGION_GROUPS.flatMap(...);
+```
+
+### 2-3. 수정 — `src/components/calls/CallForm.tsx`
+- 단일 select (서울 25구) → 2단계 select
+  - 시/도 select (3개): 서울/경기/인천
+  - 시/군/구 select: 시/도 선택 시 동적 노출
+- DB에는 시/군/구 값만 hidden input으로 전송 (기존 `district` 컬럼/스키마 100% 호환)
+
+### 2-4. 회귀 안전
+- 기존 콜의 `district`("강남구") 표시 그대로
+- 검색 필터(자유 텍스트)는 옵션과 무관하게 동작
+- DB/RLS 미변경
+
+---
+
+## 3. 작업 3: 기사앱 콜카드 슬림화
+
+### 3-1. 수정 — `src/components/calls/CallList.tsx`
+- `<details>` 컨테이너 `rounded-[28px]` → `rounded-2xl lg:rounded-[28px]`
+- `<summary>` `py-2.5` → `py-2 sm:py-2.5 lg:py-1.5` (mobile/sm/lg 3단계)
+- 모바일에서 stack → `grid-cols-2 gap-x-3 gap-y-1` 압축
+- 첫 줄 지역+주소를 한 baseline에 inline 배치 (모바일에서만)
+- 폰트 모바일 `text-xs` / sm 이상 `text-[13px]`
+
+### 3-2. 결과
+- iPhone 12 Pro viewport(844px height) 기준 한 화면 콜 ~3건 → ~6건
+- 데스크탑(`sm:`/`lg:`) 변경은 작업 2와 함께 적용
+
+### 3-3. 회귀 안전
+- CallCard 컴포넌트는 별개 (`/admin` 대시보드 최근 콜 5건에서만 사용) → 무변경
+- 잡기/반납/취소 버튼 영역 그대로 (요구사항 명시)
+
+---
+
+## 4. 작업 2: 콜직원 PC 전용 split 레이아웃
+
+### 4-1. 수정 — `src/app/(app)/layout.tsx`
+```diff
+- max-w-screen-md px-4
++ max-w-screen-md px-4 lg:max-w-screen-2xl lg:px-6
+```
+- 모바일/태블릿(<lg): 기존 그대로 (768px max-width)
+- PC(≥lg): 1536px 까지 확장
+
+### 4-2. 다른 페이지 너비 보호 (남용 방지)
+- `src/app/(app)/calls/new/page.tsx`: `mx-auto max-w-2xl` 추가 → 등록 폼이 너무 늘어나지 않게
+- `src/app/(app)/calls/[id]/page.tsx`: `mx-auto max-w-4xl` 추가 → CallDetail 폼 폭 제한
+
+### 4-3. 수정 — `src/app/(app)/calls/page.tsx` (핵심)
+- `canCreate`(dispatcher/admin)이고 PC일 때만 `lg:grid lg:grid-cols-[minmax(0,1fr)_380px]` split
+- 좌측: 기존 CallList 그대로
+- 우측 aside: `lg:sticky lg:top-4` 고정, CallForm 그대로 import
+- "콜 등록" 헤더 버튼은 모바일에서만 표시 (`lg:hidden`) — PC에서는 우측 패널이 대체
+- 기사 화면(`/my-calls`)은 영향 없음 (filterMine + technician)
+
+### 4-4. 수정 — `src/components/calls/CallList.tsx`
+- 필터 영역 `lg:sticky lg:top-2 lg:z-10` → PC 스크롤 시 필터 고정
+
+### 4-5. 회귀 안전
+- 모바일/태블릿 UI 100% 동일 (lg: prefix로 격리)
+- 기사 화면 영향 없음
+- CallForm은 등록 후 `redirect("/calls")` 그대로 → split view에서 즉시 갱신
+- 다른 admin 페이지(settlements/tax-invoices 등) 표가 더 넓어져 가독성 ↑
+
+---
+
+## 5. 작업 5: 관리자 해피콜 진입점 강화
+
+### 5-1. 수정 — `src/app/(app)/admin/page.tsx`
+- 두 개의 카운트 쿼리 추가:
+  - **해피콜 미완료**: `completed AND (happy_call_checked IS NULL OR FALSE)` 개수
+  - **금액 검증**: `customer_amount`/`paid_amount` 둘 다 있는 콜 → 클라이언트 mismatch 카운트
+- 대시보드 카드 그리드에 2개 카드 추가:
+  - 황색 카드: "해피콜 미완료 N건" → `/admin/logs?type=happy_call_unanswered`
+  - 적색 카드: "금액 불일치 M건" → `/admin/logs?type=amount_mismatch`
+
+### 5-2. 수정 — `src/app/(app)/admin/logs/page.tsx`
+- 상단에 5개 탭 추가 (Link 기반, URL `?type=` 갱신):
+  - 전체 / 해피콜 미완료 / 해피콜 완료 / 금액 불일치 / 해피콜 메시지
+- 기존 select form은 그대로 유지 (양립)
+- `activeTabKey`로 현재 탭 하이라이트
+
+### 5-3. 회귀 안전
+- 해피콜 토큰 생성 / SMS 발송 / `/api/happy-call` 응답 처리 코드 미변경
+- 기존 `/admin/logs?type=...` deep-link 그대로 작동
+- 카운트 쿼리는 head: true (메타데이터만) + 단순 IS NULL 필터로 부담 미미
+
+---
+
+## 6. 변경 / 추가 파일 목록
+
+### 신규 (1)
+- `src/lib/regions.ts` — 시/도 / 시/군/구 데이터 상수
+
+### 수정 (6)
+- `src/components/calls/CallForm.tsx` — 2단계 지역 select
+- `src/components/calls/CallList.tsx` — 모바일 컴팩트 + PC 필터 sticky + PC row 슬림
+- `src/app/(app)/calls/page.tsx` — PC dispatcher/admin split 레이아웃
+- `src/app/(app)/calls/new/page.tsx` — max-w-2xl
+- `src/app/(app)/calls/[id]/page.tsx` — max-w-4xl
+- `src/app/(app)/layout.tsx` — lg:max-w-screen-2xl
+- `src/app/(app)/admin/page.tsx` — 해피콜/금액 카드 + 카운트 쿼리
+- `src/app/(app)/admin/logs/page.tsx` — 상단 탭 추가
+
+### 건드리지 않음 (회귀 안전)
+- DB / RLS / Migration (이번 4개 작업 모두 DB 무관)
+- 해피콜 토큰 / SMS 발송 / 고객 확인 페이지
+- 정산, 세금계산서, 콜 선점/배정 로직
+- 사용자 관리 / 승인제
+
+---
+
+## 7. 검증
+
+```powershell
+npm run build
+# 결과: ✓ Compiled successfully, 32 pages, 0 errors
+```
+
+---
+
+## 8. 테스트 시나리오
+
+### A. 지역 확장
+1. `/calls/new` 접속 → 시/도 select에 서울/경기/인천 노출
+2. 경기 선택 → 시/군/구에 31개 시·군 노출
+3. 등록 → `/calls`에 정상 표시
+
+### B. 콜직원 PC split (필수: 콜직원 또는 admin 계정)
+1. PC 1440px 너비 `/calls` 접속 → 좌측 리스트 + 우측 등록 패널
+2. 우측 폼에서 콜 등록 → 좌측 리스트에 realtime 반영
+3. 모바일 vp(390px) → 단일 컬럼 + 상단 "콜 등록" 버튼 (기존과 동일)
+
+### C. 기사앱 슬림
+1. iPhone vp(390x844) `/my-calls` → 한 화면 5건 이상
+2. 잡기/반납/취소 버튼 탭 영역 유지
+3. 데스크탑 vp(1280px+) → 6컬럼 grid 정상
+
+### D. 해피콜 진입점
+1. admin 로그인 → `/admin` → "해피콜 미완료 N건" / "금액 불일치 M건" 카드 노출
+2. 카드 클릭 → `/admin/logs?type=...` 로 진입 + 데이터 필터링
+3. logs 상단 탭 클릭 → URL 갱신 + 즉시 필터링
+
+---
+
+## 9. 다음 세션 예정 작업
+
+- **작업 4**: 콜 soft delete
+  - DB migration 013 (deleted_at/deleted_by + RLS 교체) — 적용 전 영향 보고
+  - 관리자/콜직원만 삭제 가능, 기사 절대 불가
+  - 서버 권한 (API + RLS) 이중 확인
+- **작업 6**: Web Push 알림
+  - VAPID 키, `push_subscriptions` 테이블, service worker 강화
+  - 신규 콜 등록 시 해당 기사에게만 발송 (무차별 X)
+  - SMS fallback 없음 (기사 SMS 비용 0)
+  - 앱 내부 알림/뱃지/미확인 표시 구조 검토
+

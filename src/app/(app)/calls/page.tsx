@@ -3,6 +3,7 @@ import { Plus } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { CallList } from "@/components/calls/CallList";
+import { CallForm } from "@/components/calls/CallForm";
 import type { CallRow, ProfileRow } from "@/types/database";
 
 export const dynamic = "force-dynamic";
@@ -39,7 +40,7 @@ export default async function CallsPage() {
           {canCreate && (
             <Link
               href="/calls/new"
-              className="inline-flex items-center gap-1 rounded-xl bg-brand-600 px-3 py-2 text-sm font-medium text-white shadow-sm hover:bg-brand-700"
+              className="inline-flex items-center gap-1 rounded-xl bg-brand-600 px-3 py-2 text-sm font-medium text-white shadow-sm hover:bg-brand-700 lg:hidden"
             >
               <Plus size={16} />
               콜 등록
@@ -54,12 +55,30 @@ export default async function CallsPage() {
         </div>
       </div>
 
-      <CallList
-        currentUserId={user.id}
-        currentUserRole={user.profile.role}
-        initialCalls={calls}
-        profiles={profiles}
-      />
+      {/* PC(lg+) + dispatcher/admin: 좌측 리스트 + 우측 등록 폼 split. 그 외엔 기존 단일 컬럼. */}
+      {canCreate ? (
+        <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_380px] lg:items-start lg:gap-6">
+          <div className="space-y-4">
+            <CallList
+              currentUserId={user.id}
+              currentUserRole={user.profile.role}
+              initialCalls={calls}
+              profiles={profiles}
+            />
+          </div>
+          <aside className="mt-6 hidden rounded-3xl border border-slate-200 bg-white p-5 shadow-sm lg:sticky lg:top-4 lg:mt-0 lg:block">
+            <h2 className="mb-3 text-base font-semibold text-slate-900">콜 등록</h2>
+            <CallForm />
+          </aside>
+        </div>
+      ) : (
+        <CallList
+          currentUserId={user.id}
+          currentUserRole={user.profile.role}
+          initialCalls={calls}
+          profiles={profiles}
+        />
+      )}
     </section>
   );
 }

@@ -18,18 +18,44 @@ export default async function AdminPage() {
   await requireRole("admin");
 
   const supabase = createClient();
-  const [{ data: allCallsData }, { data: recentCallsData }, { data: profilesData }] =
-    await Promise.all([
-      supabase
-        .from("calls")
-        .select("status,created_at,estimated_amount,assigned_to,assigned_at,completed_at,paid_amount"),
-      supabase
-        .from("calls")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .limit(5),
-      supabase.from("profiles").select("id, name, role"),
-    ]);
+  const [
+    { data: allCallsData },
+    { data: recentCallsData },
+    { data: profilesData },
+    { count: happyCallPendingCount },
+    { data: amountCheckData },
+  ] = await Promise.all([
+    supabase
+      .from("calls")
+      .select("status,created_at,estimated_amount,assigned_to,assigned_at,completed_at,paid_amount"),
+    supabase
+      .from("calls")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(5),
+    supabase.from("profiles").select("id, name, role"),
+    // 해피콜 미완료: 완료된 콜 중 happy_call_checked=false/null
+    supabase
+      .from("calls")
+      .select("id", { count: "exact", head: true })
+      .eq("status", "completed")
+      .or("happy_call_checked.is.null,happy_call_checked.eq.false"),
+    // 금액 검증: customer_amount/paid_amount 둘 다 있는 콜만 가져와서 클라이언트에서 mismatch 계산
+    supabase
+      .from("calls")
+      .select("id,customer_amount,paid_amount")
+      .not("customer_amount", "is", null)
+      .not("paid_amount", "is", null),
+  ]);
+
+  const amountChecks = (amountCheckData ?? []) as Array<{
+    id: string;
+    customer_amount: number | null;
+    paid_amount: number | null;
+  }>;
+  const amountMismatchCount = amountChecks.filter(
+    (c) => Number(c.customer_amount) !== Number(c.paid_amount),
+  ).length;
 
   const calls = (allCallsData ?? []) as Array<
     Pick<
@@ -149,6 +175,42 @@ const cards = [
             className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
           >
             이동
+          </a>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-amber-200 bg-amber-50/40 p-5 shadow-sm">
+          <div>
+            <h2 className="text-base font-semibold">해피콜 미완료</h2>
+            <p className="text-sm text-slate-500">
+              완료 콜 중 고객 확인 대기:{" "}
+              <span className="font-semibold text-amber-700">
+                {happyCallPendingCount ?? 0}건
+              </span>
+            </p>
+          </div>
+          <a
+            href="/admin/logs?type=happy_call_unanswered"
+            className="rounded-xl border border-amber-300 bg-white px-4 py-2 text-sm font-medium text-amber-700 hover:bg-amber-50"
+          >
+            확인
+          </a>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-3xl border border-rose-200 bg-rose-50/40 p-5 shadow-sm">
+          <div>
+            <h2 className="text-base font-semibold">금액 불일치</h2>
+            <p className="text-sm text-slate-500">
+              고객 입력 금액과 기사 입력 금액 차이:{" "}
+              <span className="font-semibold text-rose-700">
+                {amountMismatchCount}건
+              </span>
+            </p>
+          </div>
+          <a
+            href="/admin/logs?type=amount_mismatch"
+            className="rounded-xl border border-rose-300 bg-white px-4 py-2 text-sm font-medium text-rose-700 hover:bg-rose-50"
+          >
+            확인
           </a>
         </div>
       </div>
