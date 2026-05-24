@@ -20,10 +20,18 @@ type PermissionState = NotificationPermission | "unsupported";
 
 const REASON_MESSAGE: Record<string, string> = {
   ssr: "지원되지 않는 환경입니다",
-  unsupported: "이 브라우저는 푸시 알림을 지원하지 않습니다 (iPhone은 홈 화면에 추가된 PWA에서만 가능)",
+  unsupported:
+    "이 브라우저는 푸시 알림을 지원하지 않습니다 (iPhone은 홈 화면에 추가된 PWA에서만 가능)",
   no_key: "VAPID 키가 설정되지 않았습니다 (관리자 문의)",
   denied: "알림 권한이 거부되었습니다. 브라우저 설정에서 허용해주세요",
   server: "서버 구독 등록 실패",
+  timeout_sw_ready:
+    "Service Worker 준비 시간 초과 — 페이지를 새로고침 후 다시 시도해주세요",
+  timeout_permission: "권한 응답 시간 초과 — 다시 시도해주세요",
+  timeout_subscribe:
+    "푸시 구독 시간 초과 — 네트워크 확인 후 다시 시도해주세요",
+  timeout_server: "서버 응답 시간 초과 — 잠시 후 다시 시도해주세요",
+  exception: "알 수 없는 오류가 발생했습니다",
 };
 
 export function SettingsClient({ role, notifyCompletion }: Props) {
@@ -40,13 +48,26 @@ export function SettingsClient({ role, notifyCompletion }: Props) {
 
   async function handleEnablePush() {
     setBusy(true);
-    const result = await subscribeUserToPush();
-    setBusy(false);
-    setPermission(getPushPermissionState());
-    if (result.ok) {
-      toast.success("알림이 활성화되었습니다");
-    } else {
-      toast.error(REASON_MESSAGE[result.reason ?? ""] ?? "알림 활성화 실패");
+    try {
+      const result = await subscribeUserToPush();
+      if (result.ok) {
+        toast.success("알림이 활성화되었습니다");
+      } else {
+        const reason = result.reason ?? "";
+        const friendly =
+          REASON_MESSAGE[reason] ?? `알림 활성화 실패 (${reason || "unknown"})`;
+        // reason을 함께 노출 → 운영 디버깅 (사용자가 캡쳐해서 보내면 단계 식별 가능)
+        toast.error(`${friendly}\n[${reason || "unknown"}]`);
+      }
+    } catch (err) {
+      // subscribeUserToPush 자체가 throw하지 않도록 설계됐지만, 만일 case 대비
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn("[settings] handleEnablePush exception:", err);
+      toast.error(`알림 활성화 중 오류: ${msg}`);
+    } finally {
+      // 어떤 경로로든 busy 해제 보장 (iPhone PWA에서 멈춤 방지)
+      setBusy(false);
+      setPermission(getPushPermissionState());
     }
   }
 

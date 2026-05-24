@@ -7,7 +7,41 @@ export type SubscribeReason =
   | "unsupported"
   | "no_key"
   | "denied"
-  | "server";
+  | "server"
+  | "timeout_sw_ready"
+  | "timeout_permission"
+  | "timeout_subscribe"
+  | "timeout_server"
+  | "exception";
+
+// 단계별 timeout (ms). iPhone PWA는 SW 등록/구독 둘 다 느릴 수 있어 여유.
+const TIMEOUT_SW_READY = 10_000;
+const TIMEOUT_PERMISSION = 30_000;
+const TIMEOUT_SUBSCRIBE = 15_000;
+const TIMEOUT_SERVER = 10_000;
+
+// promise + setTimeout race. 타임아웃 시 Error("TIMEOUT_<label>") throw.
+function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  label: string,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`TIMEOUT_${label}`));
+    }, ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
 
 // 명시적 ArrayBuffer 반환 — TS 5.6 환경에서 Uint8Array 제네릭(ArrayBufferLike) 추론으로
 // BufferSource 호환성 깨지는 것 회피
@@ -25,43 +59,100 @@ export async function subscribeUserToPush(): Promise<{
   ok: boolean;
   reason?: SubscribeReason;
 }> {
-  if (typeof window === "undefined") return { ok: false, reason: "ssr" };
+  console.log("[push] start subscribe");
+
+  if (typeof window === "undefined") {
+    console.log("[push] abort: ssr");
+    return { ok: false, reason: "ssr" };
+  }
   if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+    console.log("[push] abort: unsupported");
     return { ok: false, reason: "unsupported" };
   }
 
   const publicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
-  if (!publicKey) return { ok: false, reason: "no_key" };
-
-  const registration = await navigator.serviceWorker.ready;
-  let subscription = await registration.pushManager.getSubscription();
-
-  if (!subscription) {
-    // 권한 요청은 사용자 제스처(클릭) 안에서만 동작 (iOS).
-    // 호출자가 button onClick 등에서 이 함수를 호출하도록 설계.
-    const permission = await Notification.requestPermission();
-    if (permission !== "granted") return { ok: false, reason: "denied" };
-
-    subscription = await registration.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey: urlBase64ToArrayBuffer(publicKey),
-    });
+  if (!publicKey) {
+    console.log("[push] abort: no_key (NEXT_PUBLIC_VAPID_PUBLIC_KEY missing)");
+    return { ok: false, reason: "no_key" };
   }
 
-  const json = subscription.toJSON();
-  const res = await fetch("/api/push/subscribe", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      endpoint: subscription.endpoint,
-      p256dh: json.keys?.p256dh,
-      auth: json.keys?.auth,
-      user_agent: navigator.userAgent,
-    }),
-  });
-  if (!res.ok) return { ok: false, reason: "server" };
+  try {
+    // step 1: serviceWorker.ready (sw 활성화될 때까지 대기)
+    console.log("[push] step 1: serviceWorker.ready ...");
+    const registration = await withTimeout(
+      navigator.serviceWorker.ready,
+      TIMEOUT_SW_READY,
+      "SW_READY",
+    );
+    console.log("[push] step 1 done");
 
-  return { ok: true };
+    // step 2: 기존 구독 확인 (있으면 재사용)
+    console.log("[push] step 2: getSubscription ...");
+    let subscription = await registration.pushManager.getSubscription();
+    console.log(
+      "[push] step 2 done, hasExistingSubscription:",
+      !!subscription,
+    );
+
+    if (!subscription) {
+      // step 3: 권한 요청 — iOS는 사용자 제스처 안에서만 동작 (호출자가 onClick 안에서 호출)
+      console.log("[push] step 3: Notification.requestPermission ...");
+      const permission = await withTimeout(
+        Notification.requestPermission(),
+        TIMEOUT_PERMISSION,
+        "PERMISSION",
+      );
+      console.log("[push] step 3 done, permission:", permission);
+      if (permission !== "granted") {
+        return { ok: false, reason: "denied" };
+      }
+
+      // step 4: pushManager.subscribe (push service에 endpoint 발급 요청)
+      console.log("[push] step 4: pushManager.subscribe ...");
+      subscription = await withTimeout(
+        registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToArrayBuffer(publicKey),
+        }),
+        TIMEOUT_SUBSCRIBE,
+        "SUBSCRIBE",
+      );
+      console.log("[push] step 4 done, endpoint length:", subscription.endpoint.length);
+    }
+
+    // step 5: 서버에 구독 정보 등록
+    console.log("[push] step 5: POST /api/push/subscribe ...");
+    const json = subscription.toJSON();
+    const res = await withTimeout(
+      fetch("/api/push/subscribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          endpoint: subscription.endpoint,
+          p256dh: json.keys?.p256dh,
+          auth: json.keys?.auth,
+          user_agent: navigator.userAgent,
+        }),
+      }),
+      TIMEOUT_SERVER,
+      "SERVER",
+    );
+    console.log("[push] step 5 done, status:", res.status);
+    if (!res.ok) return { ok: false, reason: "server" };
+
+    console.log("[push] subscribe success");
+    return { ok: true };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn("[push] subscribe failed:", msg);
+    if (msg.startsWith("TIMEOUT_")) {
+      const tag = msg.slice("TIMEOUT_".length).toLowerCase();
+      // 매핑: SW_READY → timeout_sw_ready 등
+      const reason = `timeout_${tag}` as SubscribeReason;
+      return { ok: false, reason };
+    }
+    return { ok: false, reason: "exception" };
+  }
 }
 
 export async function unsubscribeUserFromPush(): Promise<boolean> {
