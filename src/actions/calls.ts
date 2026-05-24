@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createCallSchema } from "@/lib/schemas";
+import { geocodeAddress } from "@/lib/geocoding";
 
 export interface CreateCallState {
   error?: string;
@@ -44,6 +45,16 @@ export async function createCallAction(
   if (!user) return { error: "로그인이 필요합니다." };
 
   const input = parsed.data;
+
+  // 주소 → 좌표 (실패해도 콜 등록은 진행). geocodeAddress는 throw하지 않음.
+  let latitude: number | null = null;
+  let longitude: number | null = null;
+  const geo = await geocodeAddress(input.address);
+  if (geo) {
+    latitude = geo.lat;
+    longitude = geo.lng;
+  }
+
   const { error } = await supabase.from("calls").insert({
     customer_name: input.customer_name,
     phone: input.phone,
@@ -59,6 +70,8 @@ export async function createCallAction(
     status: "new",
     assigned_to: null,
     created_by: user.id,
+    latitude,
+    longitude,
   });
 
   if (error) {

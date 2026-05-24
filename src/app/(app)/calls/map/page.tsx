@@ -1,28 +1,60 @@
 import { requireUser } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
-import { CallMapView } from "@/components/calls/CallMapView";
+import {
+  CallMapView,
+  type TechnicianLocation,
+} from "@/components/calls/CallMapView";
 import type { CallRow } from "@/types/database";
 
-export default async function CallsMapPage() {
-  await requireUser();
-  const supabase = createClient();
-  const { data } = await supabase
-    .from("calls")
-    .select("*")
-    .order("created_at", { ascending: false })
-    .limit(200);
+export const dynamic = "force-dynamic";
 
-  const calls = (data ?? []) as CallRow[];
+export default async function CallsMapPage() {
+  const user = await requireUser();
+  const supabase = createClient();
+
+  const canSeeTechnicians =
+    user.profile.role === "admin" || user.profile.role === "dispatcher";
+
+  // 기사 위치는 admin/dispatcher만 조회 (RLS는 모두 허용하지만 운영 정책상 컬럼 노출 차단)
+  const [{ data: callsData }, techResult] = await Promise.all([
+    supabase
+      .from("calls")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(200),
+    canSeeTechnicians
+      ? supabase
+          .from("profiles")
+          .select("id, name, current_lat, current_lng, location_updated_at")
+          .eq("role", "technician")
+          .eq("is_active", true)
+          .not("current_lat", "is", null)
+          .not("current_lng", "is", null)
+      : Promise.resolve({ data: [] as TechnicianLocation[] }),
+  ]);
+
+  const calls = (callsData ?? []) as CallRow[];
+  const technicians = ((techResult as { data: TechnicianLocation[] | null }).data ?? [])
+    .filter(
+      (t): t is TechnicianLocation =>
+        typeof t.current_lat === "number" && typeof t.current_lng === "number",
+    );
 
   return (
     <section className="space-y-6">
       <div>
         <h1 className="text-xl font-bold">콜 지도</h1>
         <p className="mt-2 text-sm text-slate-500">
-          좌표가 있는 콜을 시각화하고, 위치 정보 기반으로 콜을 확인하세요.
+          {canSeeTechnicians
+            ? "콜 위치와 기사의 현재 위치를 함께 확인하세요. 콜 마커 클릭 시 가까운 기사 거리가 표시됩니다."
+            : "좌표가 있는 콜을 카카오맵에서 확인하세요."}
         </p>
       </div>
-      <CallMapView calls={calls} />
+      <CallMapView
+        calls={calls}
+        technicians={technicians}
+        showTechnicians={canSeeTechnicians}
+      />
     </section>
   );
 }

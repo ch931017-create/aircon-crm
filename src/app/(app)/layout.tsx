@@ -3,6 +3,7 @@ import { requireUser } from "@/lib/auth";
 import { Header } from "@/components/layout/Header";
 import { BottomNav } from "@/components/layout/BottomNav";
 import { PWAInstallPrompt } from "@/components/layout/PWAInstallPrompt";
+import { LocationUpdater } from "@/components/layout/LocationUpdater";
 
 export default async function AppLayout({
   children,
@@ -28,6 +29,7 @@ export default async function AppLayout({
       </div>
       <PWAInstallPrompt />
       <BottomNav role={user.profile.role} />
+      {user.profile.role === "technician" ? <LocationUpdater /> : null}
     </div>
   );
 }

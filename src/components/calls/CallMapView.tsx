@@ -2,41 +2,65 @@
 
 import { useMemo } from "react";
 import type { CallRow } from "@/types/database";
+import { KakaoMap, type CallMarker, type TechnicianMarker } from "./KakaoMap";
+
+export interface TechnicianLocation {
+  id: string;
+  name: string;
+  current_lat: number;
+  current_lng: number;
+  location_updated_at: string | null;
+}
 
 interface CallMapViewProps {
   calls: CallRow[];
+  technicians?: TechnicianLocation[];
+  showTechnicians?: boolean;
 }
 
-export function CallMapView({ calls }: CallMapViewProps) {
-  const points = useMemo(
-    () => calls.filter((call) => call.latitude != null && call.longitude != null),
+function escapeHtml(s: string) {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+export function CallMapView({
+  calls,
+  technicians = [],
+  showTechnicians = false,
+}: CallMapViewProps) {
+  const callMarkers = useMemo<CallMarker[]>(
+    () =>
+      calls
+        .filter((c) => c.latitude != null && c.longitude != null)
+        .map((c) => ({
+          id: c.id,
+          lat: c.latitude as number,
+          lng: c.longitude as number,
+          label: c.customer_name,
+          popupHtml: `<b>${escapeHtml(c.customer_name)}</b><br/><span style="color:#475569">${escapeHtml(c.district ?? "")} ${escapeHtml(c.address)}</span>${c.symptom ? `<br/><span style="color:#64748b;font-size:11px">${escapeHtml(c.symptom)}</span>` : ""}`,
+        })),
     [calls],
   );
 
-  const bounds = useMemo(() => {
-    if (points.length === 0) return null;
-    const lats = points.map((point) => point.latitude!);
-    const lngs = points.map((point) => point.longitude!);
-    const minLat = Math.min(...lats);
-    const maxLat = Math.max(...lats);
-    const minLng = Math.min(...lngs);
-    const maxLng = Math.max(...lngs);
-    return {
-      minLat: minLat - 0.02,
-      maxLat: maxLat + 0.02,
-      minLng: minLng - 0.02,
-      maxLng: maxLng + 0.02,
-    };
-  }, [points]);
+  const technicianMarkers = useMemo<TechnicianMarker[]>(
+    () =>
+      showTechnicians
+        ? technicians.map((t) => ({
+            id: t.id,
+            lat: t.current_lat,
+            lng: t.current_lng,
+            name: t.name,
+          }))
+        : [],
+    [technicians, showTechnicians],
+  );
 
-  const markers = useMemo(() => {
-    if (!bounds) return [];
-    return points.map((call) => {
-      const left = ((call.longitude! - bounds.minLng) / (bounds.maxLng - bounds.minLng)) * 100;
-      const top = 100 - ((call.latitude! - bounds.minLat) / (bounds.maxLat - bounds.minLat)) * 100;
-      return { call, left: Math.min(96, Math.max(2, left)), top: Math.min(96, Math.max(2, top)) };
-    });
-  }, [bounds, points]);
+  const noCoordCalls = calls.filter(
+    (c) => c.latitude == null || c.longitude == null,
+  );
 
   return (
     <div className="space-y-4">
@@ -44,70 +68,71 @@ export function CallMapView({ calls }: CallMapViewProps) {
         <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
             <h2 className="text-lg font-semibold">콜 지도</h2>
-            <p className="text-sm text-slate-500">위치 좌표가 있는 콜을 간략한 지도 뷰에 표시합니다.</p>
+            <p className="text-sm text-slate-500">
+              빨강 핀: 콜 위치 · 녹색 라벨: 기사 현재 위치
+            </p>
           </div>
-          <div className="rounded-2xl bg-slate-50 px-3 py-2 text-sm text-slate-700">
-            표시된 콜 {points.length}건
+          <div className="flex flex-wrap gap-2">
+            <span className="rounded-full bg-rose-100 px-3 py-1 text-xs font-semibold text-rose-700">
+              콜 {callMarkers.length}건
+            </span>
+            {showTechnicians && (
+              <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
+                기사 {technicianMarkers.length}명
+              </span>
+            )}
+            {noCoordCalls.length > 0 && (
+              <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-700">
+                좌표 없음 {noCoordCalls.length}건
+              </span>
+            )}
           </div>
         </div>
 
-        <div className="relative overflow-hidden rounded-3xl border border-slate-200 bg-slate-100 p-6" style={{ minHeight: 420 }}>
-          {!points.length ? (
-            <div className="flex h-full items-center justify-center text-sm text-slate-500">
-              좌표가 있는 콜이 없습니다.
-            </div>
-          ) : (
-            <div className="relative h-full w-full rounded-3xl bg-gradient-to-br from-slate-100 via-slate-200 to-slate-100">
-              <div className="absolute inset-0 opacity-30">
-                <div className="h-full w-full bg-[radial-gradient(circle_at_center,_rgba(255,255,255,0.35),_transparent_35%)]" />
-              </div>
-              {markers.map((marker) => (
-                <div
-                  key={marker.call.id}
-                  className="absolute flex flex-col items-center gap-1"
-                  style={{ left: `${marker.left}%`, top: `${marker.top}%`, transform: "translate(-50%, -50%)" }}
-                >
-                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-600 text-[10px] font-bold text-white shadow-lg">
-                    {marker.call.district ? marker.call.district.slice(0, 2) : "콜"}
-                  </div>
-                  <div className="w-28 rounded-2xl border border-slate-200 bg-white/90 p-2 text-[11px] text-slate-700 shadow-sm">
-                    <p className="font-semibold leading-4">{marker.call.customer_name}</p>
-                    <p className="truncate leading-4 text-slate-500">{marker.call.symptom ?? "증상 없음"}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+        <KakaoMap
+          callMarkers={callMarkers}
+          technicianMarkers={technicianMarkers}
+          height={520}
+        />
+
+        {showTechnicians && (
+          <p className="mt-3 text-xs text-slate-500">
+            콜 마커를 클릭하면 가까운 기사 TOP 3와 거리(km)가 표시됩니다.
+          </p>
+        )}
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[1.3fr_0.7fr]">
+      {noCoordCalls.length > 0 && (
         <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h3 className="text-sm font-semibold text-slate-900">좌표가 있는 콜</h3>
-          <div className="mt-4 space-y-3">
-            {points.map((call) => (
-              <div key={call.id} className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
-                <p className="font-medium text-slate-900">{call.district ?? "지역 미정"}</p>
-                <p className="text-sm text-slate-500">{call.address}</p>
-                <p className="mt-2 text-xs text-slate-600">Lat {call.latitude?.toFixed(4)}, Lng {call.longitude?.toFixed(4)}</p>
+          <h3 className="text-sm font-semibold text-slate-900">
+            좌표 없는 콜 ({noCoordCalls.length})
+          </h3>
+          <p className="mt-1 text-xs text-slate-500">
+            주소 geocoding이 실패했거나, migration 015 적용 전에 등록된 콜입니다.
+          </p>
+          <div className="mt-3 space-y-2">
+            {noCoordCalls.slice(0, 20).map((call) => (
+              <div
+                key={call.id}
+                className="rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm"
+              >
+                <p className="font-medium text-slate-900">
+                  {call.customer_name}{" "}
+                  <span className="text-xs text-slate-500">
+                    {call.district ?? "지역 미정"}
+                  </span>
+                </p>
+                <p className="text-xs text-slate-500">{call.address}</p>
               </div>
             ))}
+            {noCoordCalls.length > 20 && (
+              <p className="text-xs text-slate-500">
+                + {noCoordCalls.length - 20}건 더 있음
+              </p>
+            )}
           </div>
         </div>
-
-        <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h3 className="text-sm font-semibold text-slate-900">좌표 없는 콜</h3>
-          <div className="mt-4 space-y-3">
-            {calls.filter((call) => call.latitude == null || call.longitude == null).map((call) => (
-              <div key={call.id} className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
-                <p className="font-medium text-slate-900">{call.district ?? "지역 미정"}</p>
-                <p className="text-sm text-slate-500">{call.address}</p>
-                <p className="mt-2 text-xs text-slate-600">좌표 정보가 없습니다.</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
+      )}
     </div>
   );
 }

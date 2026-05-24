@@ -319,6 +319,41 @@ export function CallList({
     }
   }
 
+  async function handleUpdateLocation() {
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      toast.error("브라우저가 위치 정보를 지원하지 않습니다.");
+      return;
+    }
+    toast.message("위치를 가져오는 중...");
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        try {
+          const res = await fetch("/api/profile/location", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              lat: position.coords.latitude,
+              lng: position.coords.longitude,
+            }),
+          });
+          if (res.ok) {
+            toast.success("내 위치가 저장되었습니다.");
+            setLocation({
+              lat: position.coords.latitude,
+              lng: position.coords.longitude,
+            });
+          } else {
+            toast.error("위치 저장 실패");
+          }
+        } catch {
+          toast.error("위치 저장 실패");
+        }
+      },
+      () => toast.error("위치 권한이 필요합니다."),
+      { enableHighAccuracy: true, timeout: 10000 },
+    );
+  }
+
   async function handleCancel(callId: string) {
     setActionError(null);
     setActionLoadingId(callId);
@@ -423,9 +458,20 @@ export function CallList({
                 <p className="text-sm font-semibold text-slate-900">내 콜</p>
                 <p className="text-sm text-slate-500">현재 나에게 배정된 콜만 표시됩니다.</p>
               </div>
-              <span className="rounded-full bg-brand-100 px-3 py-1 text-xs font-semibold text-brand-700">
-                {visible.length}건
-              </span>
+              <div className="flex items-center gap-2">
+                {currentUserRole === "technician" && (
+                  <button
+                    type="button"
+                    onClick={handleUpdateLocation}
+                    className="rounded-full border border-slate-300 bg-white px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                  >
+                    📍 내 위치 갱신
+                  </button>
+                )}
+                <span className="rounded-full bg-brand-100 px-3 py-1 text-xs font-semibold text-brand-700">
+                  {visible.length}건
+                </span>
+              </div>
             </div>
             <div className="grid gap-2 sm:grid-cols-3">
               <label className="block">

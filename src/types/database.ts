@@ -46,6 +46,9 @@ export interface ProfileRow {
   approval_status: ApprovalStatus;
   approved_at: string | null;
   approved_by: string | null;
+  current_lat: number | null;
+  current_lng: number | null;
+  location_updated_at: string | null;
   [key: string]: unknown;
 }
 
@@ -108,6 +111,9 @@ interface ProfileInsert {
   approval_status?: ApprovalStatus;
   approved_at?: string | null;
   approved_by?: string | null;
+  current_lat?: number | null;
+  current_lng?: number | null;
+  location_updated_at?: string | null;
   [key: string]: unknown;
 }
 
@@ -121,6 +127,9 @@ interface ProfileUpdate {
   approval_status?: ApprovalStatus;
   approved_at?: string | null;
   approved_by?: string | null;
+  current_lat?: number | null;
+  current_lng?: number | null;
+  location_updated_at?: string | null;
   [key: string]: unknown;
 }
 
