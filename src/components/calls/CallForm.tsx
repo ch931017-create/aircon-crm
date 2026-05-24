@@ -15,7 +15,8 @@ const HOUR_OPTIONS: string[] = Array.from({ length: 13 }, (_, i) => {
 
 export function CallForm() {
   const [state, formAction] = useFormState(createCallAction, initial);
-  const fe = state.fieldErrors ?? {};
+  // state가 undefined가 되는 엣지 케이스(action 비정상 종료 등) 방어
+  const fe = state?.fieldErrors ?? {};
 
   const [selectedSido, setSelectedSido] = useState<string>("");
   const [selectedDistrict, setSelectedDistrict] = useState<string>("");
@@ -150,7 +151,7 @@ export function CallForm() {
 
       <Field label="메모" name="memo" textarea rows={2} />
 
-      {state.error && (
+      {state?.error && (
         <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">
           {state.error}
         </p>
