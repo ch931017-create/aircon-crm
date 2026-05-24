@@ -55,6 +55,7 @@ export function CallDetail({
   const [claimLoading, setClaimLoading] = useState(false);
   const [statusLoading, setStatusLoading] = useState(false);
   const [settlementLoading, setSettlementLoading] = useState(false);
+  const [deleteLoading, setDeleteLoading] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(
     (call.payment_method as PaymentMethod) ?? "cash",
   );
@@ -64,6 +65,51 @@ export function CallDetail({
   const isTechnician = currentUserRole === "technician";
   const canUpdateStatus = !isTechnician || isAssignedTechnician;
   const canClaim = isTechnician && call.status === "new" && !call.assigned_to;
+  const canDelete =
+    (currentUserRole === "admin" || currentUserRole === "dispatcher") &&
+    call.status !== "completed";
+
+  async function handleDelete() {
+    const reason = window.prompt(
+      `"${call.customer_name}" 콜을 삭제합니다.\n삭제 사유(선택, 비워도 됨):`,
+      "",
+    );
+    if (reason === null) return;
+    if (
+      !window.confirm(
+        "정말 휴지통으로 이동하시겠습니까? admin/dispatcher가 휴지통에서 복원 가능합니다.",
+      )
+    ) {
+      return;
+    }
+    setDeleteLoading(true);
+    setErrorMessage(null);
+    try {
+      const res = await fetch("/api/calls/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ call_id: call.id, reason: reason || undefined }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        const code = data?.error ?? `HTTP ${res.status}`;
+        const friendly =
+          code === "COMPLETED_CALL_CANNOT_BE_DELETED"
+            ? "완료된 콜은 삭제할 수 없습니다."
+            : code === "ALREADY_DELETED"
+              ? "이미 삭제된 콜입니다."
+              : code === "FORBIDDEN"
+                ? "삭제 권한이 없습니다."
+                : code;
+        throw new Error(friendly);
+      }
+      router.push("/calls");
+    } catch (e) {
+      setErrorMessage(e instanceof Error ? e.message : "삭제 실패");
+    } finally {
+      setDeleteLoading(false);
+    }
+  }
 
   const nextStatus = TECH_STATUS_FLOW[call.status] ?? null;
   const statusOptions = useMemo(
@@ -738,6 +784,27 @@ happycall_amount_mismatch:
           {(call.customer_happycall_memo as string | null | undefined) || "-"}
         </p>
       </div>
+    </div>
+  </div>
+)}
+
+{canDelete && (
+  <div className="rounded-3xl border border-rose-200 bg-rose-50/40 p-5 shadow-sm">
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <h2 className="text-lg font-semibold text-rose-800">콜 삭제</h2>
+        <p className="mt-1 text-sm text-rose-600">
+          휴지통으로 이동됩니다. admin / dispatcher가 휴지통에서 복원할 수 있습니다.
+        </p>
+      </div>
+      <button
+        type="button"
+        onClick={handleDelete}
+        disabled={deleteLoading}
+        className="rounded-xl bg-rose-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-rose-700 disabled:opacity-60"
+      >
+        {deleteLoading ? "삭제중..." : "🗑 콜 삭제"}
+      </button>
     </div>
   </div>
 )}

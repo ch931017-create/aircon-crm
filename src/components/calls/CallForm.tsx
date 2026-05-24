@@ -85,9 +85,10 @@ export function CallForm() {
       <Field label="증상" name="symptom" textarea rows={2} />
 
       <Field
-        label="희망 시간"
+        label="고객 희망 일시 (정시 단위)"
         name="preferred_time"
         type="datetime-local"
+        step={3600}
       />
 
       <Field
@@ -121,6 +122,7 @@ interface FieldProps {
   rows?: number;
   error?: string;
   inputMode?: "text" | "numeric" | "tel" | "email";
+  step?: number | string;
 }
 
 function Field({
@@ -133,6 +135,7 @@ function Field({
   rows,
   error,
   inputMode,
+  step,
 }: FieldProps) {
   const cls =
     "w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-base outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100";
@@ -157,6 +160,7 @@ function Field({
           inputMode={inputMode}
           required={required}
           placeholder={placeholder}
+          step={step}
           className={cls}
         />
       )}

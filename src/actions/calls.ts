@@ -61,8 +61,13 @@ export async function createCallAction(
     address: input.address,
     district: input.district ?? null,
     symptom: input.symptom ?? null,
+    // 정시 단위로 정규화 (브라우저 step="3600" 우회 시도 대비)
     preferred_time: input.preferred_time
-      ? new Date(input.preferred_time).toISOString()
+      ? (() => {
+          const d = new Date(input.preferred_time);
+          d.setMinutes(0, 0, 0);
+          return d.toISOString();
+        })()
       : null,
     memo: input.memo ?? null,
     estimated_amount: input.estimated_amount ?? null,

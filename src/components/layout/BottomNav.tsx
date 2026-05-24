@@ -9,6 +9,7 @@ import {
   MapPin,
   PhoneCall,
   Shield,
+  Trash2,
   Users,
   Wallet,
 } from "lucide-react";
@@ -39,6 +40,7 @@ function itemsFor(role: UserRole): NavItem[] {
       label: "세금계산서",
       Icon: FileText,
     });
+    base.push({ href: "/calls/trash", label: "휴지통", Icon: Trash2 });
   }
 
   if (role === "admin") {

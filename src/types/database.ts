@@ -98,6 +98,9 @@ export interface CallRow {
   tax_invoice_issued_by: string | null;
   tax_invoice_memo: string | null;
   tax_invoice_file_url: string | null;
+  deleted_at: string | null;
+  deleted_by: string | null;
+  delete_reason: string | null;
   [key: string]: unknown;
 }
 
@@ -179,6 +182,9 @@ interface CallInsert {
   tax_invoice_issued_by?: string | null;
   tax_invoice_memo?: string | null;
   tax_invoice_file_url?: string | null;
+  deleted_at?: string | null;
+  deleted_by?: string | null;
+  delete_reason?: string | null;
   [key: string]: unknown;
 }
 
@@ -228,6 +234,9 @@ interface CallUpdate {
   tax_invoice_issued_by?: string | null;
   tax_invoice_memo?: string | null;
   tax_invoice_file_url?: string | null;
+  deleted_at?: string | null;
+  deleted_by?: string | null;
+  delete_reason?: string | null;
   [key: string]: unknown;
 }
 

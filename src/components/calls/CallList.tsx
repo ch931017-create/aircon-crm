@@ -118,6 +118,7 @@ export function CallList({
   const [claimingCallId, setClaimingCallId] = useState<string | null>(null);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [deleteLoadingId, setDeleteLoadingId] = useState<string | null>(null);
   const [notificationEnabled, setNotificationEnabled] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>("default");
@@ -319,6 +320,51 @@ export function CallList({
     }
   }
 
+  async function handleDelete(callId: string, customerName: string) {
+    const reason = window.prompt(
+      `"${customerName}" 콜을 삭제합니다.\n삭제 사유(선택, 비워도 됨):`,
+      "",
+    );
+    if (reason === null) return; // 취소
+    if (
+      !window.confirm(
+        "정말 휴지통으로 이동하시겠습니까? admin/dispatcher가 휴지통에서 복원 가능합니다.",
+      )
+    ) {
+      return;
+    }
+
+    setDeleteLoadingId(callId);
+    try {
+      const res = await fetch("/api/calls/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ call_id: callId, reason: reason || undefined }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        const code = data?.error ?? `HTTP ${res.status}`;
+        const friendly =
+          code === "COMPLETED_CALL_CANNOT_BE_DELETED"
+            ? "완료된 콜은 삭제할 수 없습니다."
+            : code === "ALREADY_DELETED"
+              ? "이미 삭제된 콜입니다."
+              : code === "FORBIDDEN"
+                ? "삭제 권한이 없습니다."
+                : code;
+        throw new Error(friendly);
+      }
+      toast.success("콜이 휴지통으로 이동되었습니다");
+      // 로컬 상태에서 즉시 제거 (RLS 변경 후 다음 fetch에선 자동으로 안 보임)
+      setCalls((prev) => prev.filter((c) => c.id !== callId));
+      router.refresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "삭제 실패");
+    } finally {
+      setDeleteLoadingId(null);
+    }
+  }
+
   async function handleUpdateLocation() {
     if (typeof navigator === "undefined" || !navigator.geolocation) {
       toast.error("브라우저가 위치 정보를 지원하지 않습니다.");
@@ -384,7 +430,20 @@ export function CallList({
       .filter((call) => !HIDDEN_STATUSES.includes(call.status))
       .filter((call) => {
                 if (selectedDate) {
-          const callDate = call.scheduled_date ?? call.created_at?.slice(0, 10);
+          // 날짜 필터는 "고객 희망일" 기준.
+          // preferred_time 우선, NULL이면 scheduled_date(방문 재조정일) fallback.
+          // 둘 다 NULL이면 날짜 필터 활성화 시 제외.
+          // preferred_time은 ISO timestamp이므로 사용자 로컬(한국) timezone 기준
+          // YYYY-MM-DD로 변환 후 비교.
+          let callDate: string | null = null;
+          if (call.preferred_time) {
+            const d = new Date(call.preferred_time);
+            callDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+          } else {
+            const scheduledDate = (call as { scheduled_date?: string | null })
+              .scheduled_date;
+            callDate = scheduledDate ?? null;
+          }
           if (callDate !== selectedDate) return false;
         }
         if (filterMine && call.assigned_to !== currentUserId) return false;
@@ -484,7 +543,7 @@ export function CallList({
                 />
               </label>
               <label className="block">
-  <span className="mb-1 text-xs font-semibold text-slate-600">조회 날짜</span>
+  <span className="mb-1 text-xs font-semibold text-slate-600">희망일 조회</span>
   <input
     type="date"
     value={selectedDate}
@@ -548,7 +607,7 @@ export function CallList({
                   />
                 </label>
                 <label className="block">
-  <span className="mb-1 text-xs font-semibold text-slate-600">조회 날짜</span>
+  <span className="mb-1 text-xs font-semibold text-slate-600">희망일 조회</span>
   <input
     type="date"
     value={selectedDate}
@@ -844,6 +903,23 @@ export function CallList({
                       <p>{assignee ? assignee.name : "미배정"}</p>
                     </div>
                   </div>
+                  {(currentUserRole === "admin" ||
+                    currentUserRole === "dispatcher") &&
+                    call.status !== "completed" && (
+                      <div className="mt-3 flex justify-end">
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.preventDefault();
+                            handleDelete(call.id, call.customer_name);
+                          }}
+                          disabled={deleteLoadingId === call.id}
+                          className="rounded-xl bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-700 disabled:opacity-60"
+                        >
+                          {deleteLoadingId === call.id ? "삭제중..." : "🗑 삭제"}
+                        </button>
+                      </div>
+                    )}
                   {actionError && actionLoadingId === call.id && (
                     <p className="mt-3 rounded-2xl bg-rose-50 px-3 py-2 text-xs text-rose-700">{actionError}</p>
                   )}
