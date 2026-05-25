@@ -6,7 +6,7 @@ import type { ProfileRow } from "@/types/database";
 export const dynamic = "force-dynamic";
 
 export default async function AdminUsersPage() {
-  await requireRole("admin");
+  const me = await requireRole("admin");
 
   const supabase = createClient();
   const { data, error } = await supabase
@@ -40,5 +40,5 @@ export default async function AdminUsersPage() {
     | "approved_by"
   >[];
 
-  return <UsersClient initialProfiles={profiles} />;
+  return <UsersClient initialProfiles={profiles} currentUserId={me.id} />;
 }

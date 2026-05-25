@@ -130,7 +130,12 @@ export function CallList({
   // bulk selection (admin only). visible 변동 시 자동 prune.
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [bulkStatusTarget, setBulkStatusTarget] = useState<
+    "new" | "assigned" | "cancelled"
+  >("cancelled");
+  const [bulkStatusing, setBulkStatusing] = useState(false);
   const BULK_DELETE_MAX = 50;
+  const BULK_STATUS_MAX = 50;
   const isAdmin = currentUserRole === "admin";
   // 일반 레이아웃 필터 패널 accordion (기본 접힘 — 모바일 세로 공간 절약).
   // 같은 탭/세션 동안만 펼침 상태 유지 (페이지 이동 후 돌아와도 유지).
@@ -523,6 +528,96 @@ export function CallList({
     }
   }
 
+  async function handleBulkStatus() {
+    if (selectedIds.size === 0) return;
+    if (selectedIds.size > BULK_STATUS_MAX) {
+      toast.error(`한 번에 최대 ${BULK_STATUS_MAX}건까지 변경 가능합니다.`);
+      return;
+    }
+    const count = selectedIds.size;
+    // bulk UI 전용 라벨 — 운영자 직관 우선.
+    // (StatusBadge 등 기존 화면의 "잡음" 라벨은 그대로 유지. bulk select/confirm만 "배정됨" 사용.)
+    const targetLabel =
+      bulkStatusTarget === "new"
+        ? "대기"
+        : bulkStatusTarget === "assigned"
+          ? "배정됨"
+          : "취소";
+    if (
+      !window.confirm(
+        `선택한 ${count}건 콜의 상태를 "${targetLabel}"(으)로 변경하시겠습니까?\n` +
+          `완료된 콜과 이미 같은 상태인 콜은 자동 제외됩니다.\n` +
+          `삭제된 콜도 자동 제외됩니다.`,
+      )
+    ) {
+      return;
+    }
+
+    const ids = Array.from(selectedIds);
+    setBulkStatusing(true);
+    try {
+      const res = await fetch("/api/calls/bulk-status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ call_ids: ids, status: bulkStatusTarget }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        success?: number;
+        skipped?: number;
+        failed?: number;
+        details?: { success?: string[] };
+        error?: string;
+        limit?: number;
+      };
+      if (!res.ok) {
+        const code = data.error ?? `HTTP ${res.status}`;
+        const friendly =
+          code === "FORBIDDEN"
+            ? "권한이 없습니다."
+            : code === "TOO_MANY"
+              ? `한 번에 최대 ${data.limit ?? BULK_STATUS_MAX}건까지 변경 가능합니다.`
+              : code === "INVALID_STATUS"
+                ? "허용되지 않은 상태입니다."
+                : code === "MISSING_CALL_IDS"
+                  ? "선택된 콜이 없습니다."
+                  : code;
+        throw new Error(friendly);
+      }
+
+      // 성공한 ID만 로컬 state 즉시 반영 (target status로 갱신).
+      // 중요: data.details.skipped (completed/deleted/no_change 콜) 는 의도적으로 제외.
+      //   - completed 콜은 DB에서 protected 라 상태가 안 바뀜.
+      //   - 만약 successIds가 아닌 모든 선택 ID를 업데이트하면 UI/DB mismatch 발생.
+      //   - 따라서 successIds에만 status 적용 → router.refresh()로 보강 동기화.
+      const successIds = new Set(data.details?.success ?? []);
+      if (successIds.size > 0) {
+        setCalls((prev) =>
+          prev.map((c) =>
+            successIds.has(c.id) ? { ...c, status: bulkStatusTarget } : c,
+          ),
+        );
+      }
+      // 처리된 ID 선택 해제 (skipped/failed 포함).
+      setSelectedIds(new Set());
+
+      const s = data.success ?? 0;
+      const k = data.skipped ?? 0;
+      const f = data.failed ?? 0;
+      let msg = `${s}건 상태변경`;
+      if (k > 0) msg += ` · ${k}건 스킵`;
+      if (f > 0) msg += ` · ${f}건 실패`;
+      if (f > 0) toast.error(msg);
+      else if (k > 0) toast.message(msg);
+      else toast.success(msg);
+
+      router.refresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "일괄 상태변경 실패");
+    } finally {
+      setBulkStatusing(false);
+    }
+  }
+
   async function handleUpdateLocation() {
     if (typeof navigator === "undefined" || !navigator.geolocation) {
       toast.error("브라우저가 위치 정보를 지원하지 않습니다.");
@@ -688,12 +783,13 @@ export function CallList({
   }, [visible, selectedIds]);
 
   // 전체 선택은 visible(현재 필터 적용된 전체) 기준.
-  // 완료콜은 DB 트리거가 soft delete를 차단하므로 선택 대상에서 제외.
+  // 정책 변경 (Phase 3+): 완료콜도 선택 가능.
+  //   - bulk soft delete: API에서 완료콜 skip (정산 보호 정책 유지)
+  //   - bulk status: API에서 완료콜 skip (un-complete 방지)
+  //   → 즉 UI에서 체크는 허용하되 destructive 처리에서 자동 제외 (skipped 카운트로 안내).
+  // deleted_at은 그대로 제외 (휴지통 콜은 visible에 없지만 race 시 방어).
   const selectableVisibleIds = useMemo(
-    () =>
-      visible
-        .filter((c) => c.status !== "completed" && !c.deleted_at)
-        .map((c) => c.id),
+    () => visible.filter((c) => !c.deleted_at).map((c) => c.id),
     [visible],
   );
 
@@ -945,10 +1041,44 @@ export function CallList({
           >
             선택 해제
           </button>
+          {/* 일괄 상태변경:
+                target select(대기/잡음/취소) + 변경 버튼.
+                완료(completed) 는 의도적으로 제외 (단건 흐름 보호 — push/해피콜/정산 부수 효과).
+                상세 사유는 /api/calls/bulk-status 헤더 주석 참고. */}
+          <div className="flex items-center gap-1">
+            <select
+              value={bulkStatusTarget}
+              onChange={(e) =>
+                setBulkStatusTarget(
+                  e.target.value as "new" | "assigned" | "cancelled",
+                )
+              }
+              disabled={bulkStatusing || bulkDeleting}
+              className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700 disabled:opacity-50"
+              aria-label="변경할 상태"
+            >
+              {/* DB enum 값은 그대로 (new/assigned/cancelled). UI 라벨만 운영자 친화. */}
+              <option value="new">대기</option>
+              <option value="assigned">배정됨</option>
+              <option value="cancelled">취소</option>
+            </select>
+            <button
+              type="button"
+              onClick={handleBulkStatus}
+              disabled={
+                bulkStatusing || bulkDeleting || selectedIds.size === 0
+              }
+              className="rounded-lg bg-slate-700 px-3 py-1 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {bulkStatusing
+                ? "변경 중..."
+                : `선택 상태변경 (${selectedIds.size})`}
+            </button>
+          </div>
           <button
             type="button"
             onClick={handleBulkDelete}
-            disabled={bulkDeleting || selectedIds.size === 0}
+            disabled={bulkDeleting || bulkStatusing || selectedIds.size === 0}
             className="ml-auto rounded-lg bg-rose-600 px-3 py-1 text-xs font-semibold text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {bulkDeleting ? "삭제 중..." : `선택 삭제 (${selectedIds.size})`}
@@ -977,8 +1107,9 @@ export function CallList({
               location && call.latitude != null && call.longitude != null
                 ? getDistanceKm(location.lat, location.lng, call.latitude, call.longitude)
                 : null;
-            const checkable =
-              isAdmin && call.status !== "completed" && !call.deleted_at;
+            // 완료콜도 체크 가능 (bulk delete/status는 API에서 자동 skip).
+            // deleted_at 콜은 정상 흐름엔 없지만 race 방어로 disable.
+            const checkable = isAdmin && !call.deleted_at;
             return (
               <div
                 key={call.id}
@@ -994,8 +1125,10 @@ export function CallList({
                     disabled={!checkable || bulkDeleting}
                     title={
                       !checkable
-                        ? "완료/삭제된 콜은 선택 불가"
-                        : "선택"
+                        ? "삭제된 콜은 선택 불가"
+                        : call.status === "completed"
+                          ? "완료콜 (bulk 삭제/상태변경은 자동 제외됨)"
+                          : "선택"
                     }
                     aria-label="콜 선택"
                     className="mt-3 h-5 w-5 flex-none cursor-pointer accent-rose-600 disabled:cursor-not-allowed disabled:opacity-40"

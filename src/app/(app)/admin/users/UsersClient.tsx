@@ -36,7 +36,13 @@ const APPROVAL_LABEL: Record<ApprovalStatus, string> = {
   rejected: "거절",
 };
 
-export function UsersClient({ initialProfiles }: { initialProfiles: ProfileLite[] }) {
+export function UsersClient({
+  initialProfiles,
+  currentUserId,
+}: {
+  initialProfiles: ProfileLite[];
+  currentUserId: string;
+}) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [tab, setTab] = useState<Tab>("all");
@@ -51,6 +57,10 @@ export function UsersClient({ initialProfiles }: { initialProfiles: ProfileLite[
   const [editValue, setEditValue] = useState("");
   const [editSaving, setEditSaving] = useState(false);
   const editInputRef = useRef<HTMLInputElement | null>(null);
+
+  // 삭제 진행 중인 user_id. 중복 클릭/요청 차단 + 해당 row 버튼 "삭제중..." 표시.
+  // 한 번에 한 row만 삭제 진행 (간단한 UX, race 회피).
+  const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
 
   // 편집 모드 진입 시 input에 포커스 + 전체 선택 (빠른 덮어쓰기)
   useEffect(() => {
@@ -78,6 +88,21 @@ export function UsersClient({ initialProfiles }: { initialProfiles: ProfileLite[
   const pendingCount = initialProfiles.filter(
     (p) => p.approval_status === "pending",
   ).length;
+
+  // 마지막 admin 가드용 카운트.
+  // "활성 admin" = role=admin AND is_active AND approval_status=approved.
+  // 이 카운트가 1이고 삭제 대상이 그 활성 admin이면 UI에서도 disable.
+  // 서버 측에도 동일 검증 있음 (방어 X 2).
+  const activeAdminCount = useMemo(
+    () =>
+      initialProfiles.filter(
+        (p) =>
+          p.role === "admin" &&
+          p.is_active === true &&
+          p.approval_status === "approved",
+      ).length,
+    [initialProfiles],
+  );
 
   async function callApi(url: string, body: object) {
     const res = await fetch(url, {
@@ -181,6 +206,60 @@ export function UsersClient({ initialProfiles }: { initialProfiles: ProfileLite[
       else toast.error(msg);
     } finally {
       setEditSaving(false);
+    }
+  }
+
+  async function handleDelete(p: ProfileLite) {
+    // 진행 중인 삭제가 있으면 중복 차단 (다른 row 클릭도 막음 — 단순한 UX).
+    if (deletingUserId) return;
+
+    // 클라이언트 가드 (서버에도 동일 검증):
+    //   1) 본인 ID 차단
+    //   2) 마지막 활성 admin 차단
+    if (p.id === currentUserId) {
+      toast.error("본인 계정은 삭제할 수 없습니다");
+      return;
+    }
+    const isLastActiveAdmin =
+      p.role === "admin" &&
+      p.is_active === true &&
+      p.approval_status === "approved" &&
+      activeAdminCount <= 1;
+    if (isLastActiveAdmin) {
+      toast.error("마지막 활성 관리자는 삭제할 수 없습니다");
+      return;
+    }
+
+    // 강한 confirm. 사용자 이름/역할 + 복구 불가 + 사이드 이펙트 4가지 명시.
+    const roleLabel = ROLE_LABEL[p.role];
+    const ok = window.confirm(
+      `정말 다음 계정을 영구 삭제하시겠습니까?\n\n` +
+        `· 이름: ${p.name || "(이름없음)"}\n` +
+        `· 역할: ${roleLabel}\n\n` +
+        `[복구 불가] 이 작업은 되돌릴 수 없습니다.\n\n` +
+        `· 이 계정으로 더 이상 로그인할 수 없습니다.\n` +
+        `· 푸시 알림 구독은 함께 삭제됩니다.\n` +
+        `· 이 사용자가 배정/생성/삭제한 콜과 해피콜 로그는 보존됩니다\n` +
+        `  (담당자 필드는 빈 값으로 변경됨).`,
+    );
+    if (!ok) return;
+
+    setDeletingUserId(p.id);
+    try {
+      await callApi("/api/admin/users/delete", { user_id: p.id });
+      toast.success(`${p.name || "계정"}을 삭제했습니다`);
+      refresh();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "삭제 실패";
+      if (msg.includes("CANNOT_DELETE_SELF"))
+        toast.error("본인 계정은 삭제할 수 없습니다");
+      else if (msg.includes("CANNOT_DELETE_LAST_ADMIN"))
+        toast.error("마지막 활성 관리자는 삭제할 수 없습니다");
+      else if (msg.includes("NOT_FOUND"))
+        toast.error("이미 삭제된 계정입니다");
+      else toast.error(msg);
+    } finally {
+      setDeletingUserId(null);
     }
   }
 
@@ -456,37 +535,76 @@ export function UsersClient({ initialProfiles }: { initialProfiles: ProfileLite[
                     {new Date(p.created_at).toLocaleDateString("ko-KR")}
                   </td>
                   <td className="px-4 py-3 text-right">
-                    {p.approval_status === "pending" ? (
-                      <div className="flex justify-end gap-1.5">
-                        <button
-                          type="button"
-                          disabled={isPending}
-                          onClick={() => handleApprove(p.id, true)}
-                          className="rounded-lg bg-emerald-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-emerald-700"
-                        >
-                          승인
-                        </button>
-                        <button
-                          type="button"
-                          disabled={isPending}
-                          onClick={() => handleApprove(p.id, false)}
-                          className="rounded-lg bg-rose-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-rose-700"
-                        >
-                          거절
-                        </button>
-                      </div>
-                    ) : p.approval_status === "rejected" ? (
-                      <button
-                        type="button"
-                        disabled={isPending}
-                        onClick={() => handleApprove(p.id, true)}
-                        className="rounded-lg bg-emerald-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-emerald-700"
-                      >
-                        재승인
-                      </button>
-                    ) : (
-                      <span className="text-xs text-slate-400">-</span>
-                    )}
+                    {(() => {
+                      // 삭제 가드 (UI 측):
+                      //   - 본인 계정 → disable
+                      //   - 마지막 활성 admin → disable (해당 admin 자신만)
+                      // 둘 다 서버에서 동일 검증. 여기는 UX 명시.
+                      const isSelf = p.id === currentUserId;
+                      const isLastActiveAdmin =
+                        p.role === "admin" &&
+                        p.is_active === true &&
+                        p.approval_status === "approved" &&
+                        activeAdminCount <= 1;
+                      const isThisDeleting = deletingUserId === p.id;
+                      const someoneDeleting = deletingUserId !== null;
+                      // 본인/last-admin 가드 + 자신/타 row 삭제 진행 중 모두 disable.
+                      const deleteDisabled =
+                        isPending ||
+                        isSelf ||
+                        isLastActiveAdmin ||
+                        someoneDeleting;
+                      const deleteTitle = isSelf
+                        ? "본인 계정은 삭제할 수 없습니다"
+                        : isLastActiveAdmin
+                          ? "마지막 활성 관리자는 삭제할 수 없습니다"
+                          : someoneDeleting && !isThisDeleting
+                            ? "다른 사용자 삭제 진행 중"
+                            : "사용자 영구 삭제 (복구 불가)";
+                      return (
+                        <div className="flex flex-wrap items-center justify-end gap-1.5">
+                          {p.approval_status === "pending" && (
+                            <>
+                              <button
+                                type="button"
+                                disabled={isPending}
+                                onClick={() => handleApprove(p.id, true)}
+                                className="rounded-lg bg-emerald-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-emerald-700"
+                              >
+                                승인
+                              </button>
+                              <button
+                                type="button"
+                                disabled={isPending}
+                                onClick={() => handleApprove(p.id, false)}
+                                className="rounded-lg bg-rose-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-rose-700"
+                              >
+                                거절
+                              </button>
+                            </>
+                          )}
+                          {p.approval_status === "rejected" && (
+                            <button
+                              type="button"
+                              disabled={isPending}
+                              onClick={() => handleApprove(p.id, true)}
+                              className="rounded-lg bg-emerald-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-emerald-700"
+                            >
+                              재승인
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            disabled={deleteDisabled}
+                            onClick={() => handleDelete(p)}
+                            title={deleteTitle}
+                            className="rounded-lg border border-rose-300 bg-white px-2.5 py-1 text-xs font-medium text-rose-700 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            {isThisDeleting ? "삭제중..." : "삭제"}
+                          </button>
+                        </div>
+                      );
+                    })()}
                   </td>
                 </tr>
                 );
