@@ -1,9 +1,13 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import type { ApprovalStatus, ProfileRow, UserRole } from "@/types/database";
+
+// 인라인 편집 대상 셀. 같은 row에서 name → phone 으로 순차 편집은 허용 안 함
+// (별도 클릭 필요) → 실수 저장 방지.
+type EditTarget = { id: string; field: "name" | "phone" } | null;
 
 type ProfileLite = Pick<
   ProfileRow,
@@ -40,6 +44,21 @@ export function UsersClient({ initialProfiles }: { initialProfiles: ProfileLite[
 
   const [showCreate, setShowCreate] = useState(false);
   const [createRole, setCreateRole] = useState<UserRole>("dispatcher");
+
+  // inline 편집 상태. editTarget이 set되면 해당 cell이 input 모드.
+  // editValue는 input의 current 값 (controlled). editSaving은 저장 중 중복 방지.
+  const [editTarget, setEditTarget] = useState<EditTarget>(null);
+  const [editValue, setEditValue] = useState("");
+  const [editSaving, setEditSaving] = useState(false);
+  const editInputRef = useRef<HTMLInputElement | null>(null);
+
+  // 편집 모드 진입 시 input에 포커스 + 전체 선택 (빠른 덮어쓰기)
+  useEffect(() => {
+    if (editTarget && editInputRef.current) {
+      editInputRef.current.focus();
+      editInputRef.current.select();
+    }
+  }, [editTarget]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -110,6 +129,58 @@ export function UsersClient({ initialProfiles }: { initialProfiles: ProfileLite[
       refresh();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "처리 실패");
+    }
+  }
+
+  function startEdit(id: string, field: "name" | "phone", current: string | null) {
+    if (editSaving) return;
+    setEditTarget({ id, field });
+    setEditValue(current ?? "");
+  }
+
+  function cancelEdit() {
+    setEditTarget(null);
+    setEditValue("");
+  }
+
+  async function saveEdit() {
+    if (!editTarget) return;
+    if (editSaving) return;
+
+    const field = editTarget.field;
+    const original =
+      initialProfiles.find((p) => p.id === editTarget.id)?.[field] ?? "";
+    const next = editValue.trim();
+
+    // 변경 없으면 그대로 닫기 (불필요한 API 호출 방지)
+    if (next === (original ?? "")) {
+      cancelEdit();
+      return;
+    }
+
+    // name은 비울 수 없음 (서버에서도 검증되지만 UX 빠르게)
+    if (field === "name" && !next) {
+      toast.error("이름은 비울 수 없습니다");
+      return;
+    }
+
+    setEditSaving(true);
+    try {
+      await callApi("/api/admin/users/update", {
+        user_id: editTarget.id,
+        [field]: next,
+      });
+      toast.success(field === "name" ? "이름이 수정되었습니다" : "전화번호가 수정되었습니다");
+      cancelEdit();
+      refresh();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "수정 실패";
+      if (msg.includes("NAME_EMPTY")) toast.error("이름은 비울 수 없습니다");
+      else if (msg.includes("NAME_TOO_LONG")) toast.error("이름이 너무 깁니다 (최대 100자)");
+      else if (msg.includes("PHONE_TOO_LONG")) toast.error("전화번호가 너무 깁니다");
+      else toast.error(msg);
+    } finally {
+      setEditSaving(false);
     }
   }
 
@@ -259,12 +330,87 @@ export function UsersClient({ initialProfiles }: { initialProfiles: ProfileLite[
               </tr>
             </thead>
             <tbody>
-              {filtered.map((p) => (
+              {filtered.map((p) => {
+                const isEditingName =
+                  editTarget?.id === p.id && editTarget.field === "name";
+                const isEditingPhone =
+                  editTarget?.id === p.id && editTarget.field === "phone";
+                return (
                 <tr key={p.id} className="border-t border-slate-100">
                   <td className="px-4 py-3 font-medium text-slate-900">
-                    {p.name || "(이름없음)"}
+                    {isEditingName ? (
+                      <input
+                        ref={editInputRef}
+                        type="text"
+                        value={editValue}
+                        onChange={(e) => setEditValue(e.target.value)}
+                        // blur 자동저장 제거 (실수 방지): 다른 곳 클릭 시 변경 폐기 후 편집 종료.
+                        // 명시적 저장은 Enter 만 인정. Esc / blur 는 모두 취소.
+                        onBlur={() => {
+                          if (editSaving) return;
+                          cancelEdit();
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            void saveEdit();
+                          } else if (e.key === "Escape") {
+                            e.preventDefault();
+                            cancelEdit();
+                          }
+                        }}
+                        disabled={editSaving}
+                        maxLength={100}
+                        className="w-full rounded-lg border border-brand-500 bg-white px-2 py-1 text-sm outline-none ring-2 ring-brand-100 disabled:opacity-60"
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => startEdit(p.id, "name", p.name)}
+                        title="클릭하여 수정 (Enter 저장, Esc 취소)"
+                        className="w-full rounded px-1 py-0.5 text-left hover:bg-slate-100"
+                      >
+                        {p.name || "(이름없음)"}
+                      </button>
+                    )}
                   </td>
-                  <td className="px-4 py-3 text-slate-700">{p.phone ?? "-"}</td>
+                  <td className="px-4 py-3 text-slate-700">
+                    {isEditingPhone ? (
+                      <input
+                        ref={editInputRef}
+                        type="tel"
+                        value={editValue}
+                        onChange={(e) => setEditValue(e.target.value)}
+                        // blur 자동저장 제거 (실수 방지): 명시적 저장은 Enter 만 인정.
+                        onBlur={() => {
+                          if (editSaving) return;
+                          cancelEdit();
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            void saveEdit();
+                          } else if (e.key === "Escape") {
+                            e.preventDefault();
+                            cancelEdit();
+                          }
+                        }}
+                        disabled={editSaving}
+                        maxLength={30}
+                        placeholder="010-1234-5678"
+                        className="w-full rounded-lg border border-brand-500 bg-white px-2 py-1 text-sm outline-none ring-2 ring-brand-100 disabled:opacity-60"
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => startEdit(p.id, "phone", p.phone ?? "")}
+                        title="클릭하여 수정 (Enter 저장, Esc 취소)"
+                        className="w-full rounded px-1 py-0.5 text-left text-slate-700 hover:bg-slate-100"
+                      >
+                        {p.phone ?? "-"}
+                      </button>
+                    )}
+                  </td>
                   <td className="px-4 py-3">
                     <select
                       value={p.role}
@@ -343,7 +489,8 @@ export function UsersClient({ initialProfiles }: { initialProfiles: ProfileLite[
                     )}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

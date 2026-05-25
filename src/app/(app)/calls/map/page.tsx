@@ -43,6 +43,8 @@ export default async function CallsMapPage() {
             "status,assigned_to," +
             "latitude,longitude",
         )
+        // soft delete 가드 #1: 삭제된 콜은 지도에 표시 X
+        .is("deleted_at", null)
         .order("created_at", { ascending: false })
         .limit(200),
     ),

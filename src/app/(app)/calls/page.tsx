@@ -30,6 +30,9 @@ export default async function CallsPage() {
             "scheduled_date," +
             "latitude,longitude",
         )
+        // soft delete 가드 #1 (page query): admin/dispatcher RLS는 deleted 콜도 보여주므로
+        // 정규 활성콜 화면에선 명시적으로 제외. 휴지통은 별도 페이지(/calls/trash)에서만 조회.
+        .is("deleted_at", null)
         .order("created_at", { ascending: false })
         .limit(400),
     ),

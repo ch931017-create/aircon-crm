@@ -27,6 +27,8 @@ export default async function MyCallsPage() {
             "latitude,longitude",
         )
         .eq("assigned_to", user.id)
+        // soft delete 가드 #1: admin은 deleted 콜도 보이므로 명시 제외
+        .is("deleted_at", null)
         .order("created_at", { ascending: false })
         .limit(400),
     ),

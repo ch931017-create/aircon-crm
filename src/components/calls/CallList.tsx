@@ -226,6 +226,11 @@ export function CallList({
         { event: "INSERT", schema: "public", table: "calls" },
         (payload) => {
           const row = payload.new as CallRow;
+          // soft delete 가드 #3-a (realtime INSERT 방어):
+          // INSERT 시점 deleted_at은 일반적으로 null이지만, race condition이나
+          // 옛 row 재insert 같은 edge case에서도 deleted row가 목록에 안 들어오게.
+          if (row.deleted_at) return;
+
           setCalls((prev) => {
             if (prev.some((c) => c.id === row.id)) return prev;
             return [row, ...prev];
@@ -246,6 +251,13 @@ export function CallList({
         { event: "UPDATE", schema: "public", table: "calls" },
         (payload) => {
           const row = payload.new as CallRow;
+          // soft delete 가드 #3-b (realtime UPDATE 본체):
+          // 본인 외 다른 admin/dispatcher가 삭제하면 realtime UPDATE로 deleted_at 채워진 row가 옴.
+          // 이 시점에서 즉시 로컬 state에서 제거. 이전엔 map 업데이트만 해서 화면에 잔존했음.
+          if (row.deleted_at) {
+            setCalls((prev) => prev.filter((c) => c.id !== row.id));
+            return;
+          }
           setCalls((prev) => prev.map((c) => (c.id === row.id ? row : c)));
         },
       )
@@ -474,6 +486,10 @@ export function CallList({
     const regionTerm = region.trim().toLowerCase();
 
     return calls
+      // soft delete 가드 #2 (client-side defensive filter):
+      // page query에서 이미 제외되지만, realtime/state 손실 등에서 deleted row가
+      // 일시적으로 섞일 가능성 차단. 휴지통은 별도 page라 영향 없음.
+      .filter((call) => !call.deleted_at)
       .filter((call) => !HIDDEN_STATUSES.includes(call.status))
       .filter((call) => {
                 if (selectedDate) {
