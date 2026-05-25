@@ -5,13 +5,16 @@ import { BottomNav } from "@/components/layout/BottomNav";
 import { PWAInstallPrompt } from "@/components/layout/PWAInstallPrompt";
 import { LocationUpdater } from "@/components/layout/LocationUpdater";
 import { PushManager } from "@/components/layout/PushManager";
+import { timed } from "@/lib/timing";
 
 export default async function AppLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const user = await requireUser();
+  const tLayoutStart = Date.now();
+  const user = await timed("(app)/layout requireUser", requireUser());
+  console.log(`[timing] (app)/layout TOTAL: ${Date.now() - tLayoutStart}ms`);
 
   // 승인 가드: pending/rejected 사용자는 앱 기능 접근 차단.
   // admin은 본인이 'pending'이면 안 되지만 (012 migration에서 백필) 만일을 위해 우회.

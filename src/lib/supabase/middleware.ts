@@ -3,6 +3,8 @@ import { NextResponse, type NextRequest } from "next/server";
 import type { Database } from "@/types/database";
 
 export async function updateSession(request: NextRequest) {
+  const tStart = Date.now();
+  const path = request.nextUrl.pathname;
   let response = NextResponse.next({ request });
 
   const supabase = createServerClient<Database>(
@@ -28,9 +30,12 @@ export async function updateSession(request: NextRequest) {
     },
   );
 
+  const tAuth = Date.now();
   const {
     data: { user },
   } = await supabase.auth.getUser();
+  console.log(`[timing] middleware ${path} auth.getUser: ${Date.now() - tAuth}ms`);
+  console.log(`[timing] middleware ${path} TOTAL: ${Date.now() - tStart}ms`);
 
   return { response, user };
 }
