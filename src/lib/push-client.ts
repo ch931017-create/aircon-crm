@@ -169,16 +169,30 @@ export async function subscribeUserToPush(): Promise<{
 }
 
 export async function unsubscribeUserFromPush(): Promise<boolean> {
+  // 동기화 정책: 가능한 한 success 반환 (false 는 진짜 catastrophic 케이스만).
+  // 이유: "이미 해제됨" / "SW 미준비" 같은 케이스에서 사용자 의도는 "구독 해제" 이므로
+  //       UX 상 success 로 처리. 서버는 idempotent.
   try {
-    if (typeof window === "undefined") return false;
-    if (typeof navigator === "undefined") return false;
-    if (!("serviceWorker" in navigator)) return false;
+    if (typeof window === "undefined") return true;
+    if (typeof navigator === "undefined") return true;
+    if (!("serviceWorker" in navigator)) return true;
 
-    const registration = await withTimeout(
-      navigator.serviceWorker.ready,
-      TIMEOUT_SW_READY,
-      "SW_READY",
-    );
+    let registration: ServiceWorkerRegistration;
+    try {
+      registration = await withTimeout(
+        navigator.serviceWorker.ready,
+        TIMEOUT_SW_READY,
+        "SW_READY",
+      );
+    } catch (err) {
+      // SW 미준비 → 로컬엔 구독이 없는 셈. 사용자 의도(해제) 충족으로 간주.
+      console.warn(
+        "[push] SW not ready during unsubscribe (treating as success):",
+        err,
+      );
+      return true;
+    }
+
     const subscription = await registration.pushManager.getSubscription();
     if (!subscription) return true;
 
@@ -186,19 +200,31 @@ export async function unsubscribeUserFromPush(): Promise<boolean> {
 
     try {
       await subscription.unsubscribe();
-    } catch {
-      // 일부 브라우저에서 실패 가능, 서버 삭제는 계속 시도
+    } catch (err) {
+      // 일부 브라우저에서 실패 가능 → 서버 삭제는 계속 시도
+      console.warn(
+        "[push] subscription.unsubscribe() failed (continuing):",
+        err,
+      );
     }
 
-    await fetch("/api/push/unsubscribe", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ endpoint }),
-    }).catch(() => {});
+    try {
+      await fetch("/api/push/unsubscribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ endpoint }),
+      });
+    } catch (err) {
+      console.warn(
+        "[push] /api/push/unsubscribe fetch failed (continuing):",
+        err,
+      );
+    }
 
     return true;
   } catch (err) {
-    console.warn("[push] unsubscribe failed:", err);
+    // 진짜 예상 못 한 catastrophic 케이스만 false.
+    console.warn("[push] unsubscribe outer exception:", err);
     return false;
   }
 }

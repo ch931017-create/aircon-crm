@@ -46,6 +46,57 @@ export function SettingsClient({ role, notifyCompletion }: Props) {
   const [callNotifEnabled, setCallNotifEnabled] = useState<boolean>(false);
   const [callSoundEnabled, setCallSoundEnabled] = useState<boolean>(true);
 
+  // 동기화 상태 진단:
+  //   - localSubEndpoint   : 브라우저 PushSubscription.endpoint
+  //   - serverEndpoints    : 서버 DB 에 등록된 본인 endpoint 목록
+  //   - mismatch           : 로컬에는 있는데 서버엔 없음 → 재등록 필요
+  // 로컬/서버 둘 다 확인되어야 정확한 동기화 안내 가능.
+  const [localSubEndpoint, setLocalSubEndpoint] = useState<string | null>(null);
+  const [serverEndpoints, setServerEndpoints] = useState<string[] | null>(null);
+  const [statusLoading, setStatusLoading] = useState(true);
+
+  // 로컬 + 서버 상태 fetch. 마운트 시 + enable/disable 후 호출.
+  async function refetchPushStatus() {
+    setStatusLoading(true);
+    try {
+      // 1) 브라우저 로컬 subscription
+      let localEp: string | null = null;
+      if (
+        typeof navigator !== "undefined" &&
+        "serviceWorker" in navigator &&
+        typeof window !== "undefined" &&
+        "PushManager" in window
+      ) {
+        try {
+          const reg = await navigator.serviceWorker.ready;
+          const sub = await reg.pushManager.getSubscription();
+          localEp = sub?.endpoint ?? null;
+        } catch (err) {
+          console.warn("[settings] local subscription fetch failed:", err);
+        }
+      }
+      setLocalSubEndpoint(localEp);
+
+      // 2) 서버 DB 등록 endpoint 목록
+      try {
+        const res = await fetch("/api/push/status");
+        if (res.ok) {
+          const data = (await res.json()) as {
+            endpoints?: Array<{ endpoint: string }>;
+          };
+          setServerEndpoints((data.endpoints ?? []).map((e) => e.endpoint));
+        } else {
+          setServerEndpoints([]);
+        }
+      } catch (err) {
+        console.warn("[settings] /api/push/status fetch failed:", err);
+        setServerEndpoints([]);
+      }
+    } finally {
+      setStatusLoading(false);
+    }
+  }
+
   useEffect(() => {
     setPermission(getPushPermissionState());
     setSupported(isPushSupported());
@@ -55,7 +106,18 @@ export function SettingsClient({ role, notifyCompletion }: Props) {
       const s = window.localStorage.getItem("callNotificationSoundEnabled");
       if (s !== null) setCallSoundEnabled(s === "true");
     }
+    void refetchPushStatus();
   }, []);
+
+  // 상태 derive
+  const localExists = localSubEndpoint !== null;
+  const serverExists =
+    serverEndpoints !== null &&
+    localSubEndpoint !== null &&
+    serverEndpoints.includes(localSubEndpoint);
+  // permission=granted + 로컬 sub 있음 + 서버에 그 endpoint 없음 → 재등록 필요.
+  const mismatch =
+    permission === "granted" && localExists && !serverExists && !statusLoading;
 
   function toggleCallNotif(next: boolean) {
     setCallNotifEnabled(next);
@@ -85,12 +147,18 @@ export function SettingsClient({ role, notifyCompletion }: Props) {
     }
   }
 
+  // mismatch 일 때도 동일 함수 호출. subscribeUserToPush 는 로컬 sub 가 있으면
+  // step3/4 (permission/subscribe) 스킵하고 step5 (서버 upsert) 만 실행 →
+  // 서버 push_subscriptions 에 row 가 새로 등록 (onConflict: endpoint).
   async function handleEnablePush() {
     setBusy(true);
+    const wasMismatch = mismatch;
     try {
       const result = await subscribeUserToPush();
       if (result.ok) {
-        toast.success("알림이 활성화되었습니다");
+        toast.success(
+          wasMismatch ? "푸시가 재등록되었습니다" : "알림이 활성화되었습니다",
+        );
       } else {
         const reason = result.reason ?? "";
         const friendly =
@@ -107,6 +175,8 @@ export function SettingsClient({ role, notifyCompletion }: Props) {
       // 어떤 경로로든 busy 해제 보장 (iPhone PWA에서 멈춤 방지)
       setBusy(false);
       setPermission(getPushPermissionState());
+      // 서버/로컬 상태 재확인 → UI 동기화 표시 즉시 반영
+      await refetchPushStatus();
     }
   }
 
@@ -115,10 +185,14 @@ export function SettingsClient({ role, notifyCompletion }: Props) {
     const ok = await unsubscribeUserFromPush();
     setBusy(false);
     setPermission(getPushPermissionState());
+    await refetchPushStatus();
     if (ok) {
       toast.success("알림 구독이 해제되었습니다 (브라우저 권한은 별도로 끄세요)");
     } else {
-      toast.error("알림 비활성화 실패");
+      // unsubscribeUserFromPush 가 정책적으로 거의 항상 true → false 면 catastrophic.
+      toast.error(
+        "알림 해제 중 문제가 발생했습니다. 페이지 새로고침 후 다시 시도해주세요",
+      );
     }
   }
 
@@ -183,11 +257,61 @@ export function SettingsClient({ role, notifyCompletion }: Props) {
           </span>
         </div>
 
+        {/* 동기화 상태 디버그 — 운영 진단 + 사용자 안내 동시 목적.
+            로컬과 서버 둘 다 표시해서 mismatch 케이스를 사용자가 인지 가능. */}
+        <div className="mt-4 space-y-1 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+          <div>
+            브라우저 권한:{" "}
+            <strong>
+              {permission === "granted"
+                ? "허용"
+                : permission === "denied"
+                  ? "차단"
+                  : permission === "unsupported"
+                    ? "지원 안 함"
+                    : "미허용"}
+            </strong>
+          </div>
+          <div>
+            로컬 구독:{" "}
+            <strong>
+              {statusLoading ? "확인중..." : localExists ? "있음" : "없음"}
+            </strong>
+          </div>
+          <div>
+            서버 등록:{" "}
+            <strong>
+              {statusLoading ? "확인중..." : serverExists ? "있음" : "없음"}
+            </strong>
+          </div>
+          {mismatch && (
+            <div className="mt-1 rounded-lg bg-amber-100 px-2 py-1 text-amber-800">
+              로컬 구독은 있지만 서버에 등록되지 않았습니다. 아래
+              &quot;푸시 재등록&quot; 버튼으로 동기화하세요.
+            </div>
+          )}
+        </div>
+
         <div className="mt-4">
           {!supported ? (
             <p className="rounded-2xl bg-slate-50 px-3 py-2 text-xs text-slate-600">
               이 브라우저는 푸시 알림을 지원하지 않습니다.
             </p>
+          ) : permission === "denied" ? (
+            <p className="rounded-2xl bg-rose-50 px-3 py-2 text-xs text-rose-700">
+              알림 권한이 차단되어 있습니다. 브라우저 주소창 좌측 자물쇠 아이콘
+              → 사이트 설정 → 알림 허용 후 다시 시도하세요.
+            </p>
+          ) : mismatch ? (
+            // 로컬 sub 있는데 서버 없음 → 재등록 (subscribeUserToPush 가 upsert만 수행)
+            <button
+              type="button"
+              onClick={handleEnablePush}
+              disabled={busy}
+              className="rounded-xl bg-amber-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-amber-700 disabled:opacity-60"
+            >
+              {busy ? "재등록 중..." : "푸시 재등록"}
+            </button>
           ) : permission === "granted" ? (
             <button
               type="button"
@@ -197,11 +321,6 @@ export function SettingsClient({ role, notifyCompletion }: Props) {
             >
               알림 구독 해제
             </button>
-          ) : permission === "denied" ? (
-            <p className="rounded-2xl bg-rose-50 px-3 py-2 text-xs text-rose-700">
-              알림 권한이 차단되어 있습니다. 브라우저 주소창 좌측 자물쇠 아이콘
-              → 사이트 설정 → 알림 허용 후 다시 시도하세요.
-            </p>
           ) : (
             <button
               type="button"
