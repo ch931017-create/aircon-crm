@@ -127,6 +127,11 @@ export function CallList({
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [deleteLoadingId, setDeleteLoadingId] = useState<string | null>(null);
+  // bulk selection (admin only). visible 변동 시 자동 prune.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const BULK_DELETE_MAX = 50;
+  const isAdmin = currentUserRole === "admin";
   // 일반 레이아웃 필터 패널 accordion (기본 접힘 — 모바일 세로 공간 절약).
   // 같은 탭/세션 동안만 펼침 상태 유지 (페이지 이동 후 돌아와도 유지).
   // sessionStorage 사용 → 브라우저/PWA 재시작 시 다시 default(접힘).
@@ -424,6 +429,100 @@ export function CallList({
     }
   }
 
+  // selectedIds 갱신 규칙 (중요):
+  //   - React state로 들고 있는 Set은 절대 직접 mutate 금지.
+  //   - 모든 갱신은 `new Set(prev)` 또는 `new Set([...])` 로 새 인스턴스 만든 뒤
+  //     add/delete → setSelectedIds(next) 형태로만.
+  //   - prev를 그대로 add/delete 하면 reference 동일이라 React 렌더 누락 + 캡처된
+  //     클로저(다른 useMemo/useEffect)와 충돌 가능.
+  function toggleSelected(id: string) {
+    setSelectedIds((prev) => {
+      // new Set(prev): 새 인스턴스. 이후 add/delete는 next에만 영향.
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function clearSelection() {
+    // 새 빈 Set으로 교체. 기존 prev 미터치.
+    setSelectedIds(new Set());
+  }
+
+  async function handleBulkDelete() {
+    if (selectedIds.size === 0) return;
+    if (selectedIds.size > BULK_DELETE_MAX) {
+      toast.error(`한 번에 최대 ${BULK_DELETE_MAX}건까지 삭제 가능합니다.`);
+      return;
+    }
+    const count = selectedIds.size;
+    if (
+      !window.confirm(
+        `정말 선택한 ${count}건 콜을 삭제하시겠습니까?\n` +
+          `삭제된 콜은 휴지통으로 이동합니다.\n` +
+          `완료된 콜은 자동 제외됩니다.`,
+      )
+    ) {
+      return;
+    }
+
+    const ids = Array.from(selectedIds);
+    setBulkDeleting(true);
+    try {
+      const res = await fetch("/api/calls/bulk-delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ call_ids: ids }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        success?: number;
+        skipped?: number;
+        failed?: number;
+        details?: { success?: string[] };
+        error?: string;
+        limit?: number;
+      };
+      if (!res.ok) {
+        const code = data.error ?? `HTTP ${res.status}`;
+        const friendly =
+          code === "FORBIDDEN"
+            ? "권한이 없습니다."
+            : code === "TOO_MANY"
+              ? `한 번에 최대 ${data.limit ?? BULK_DELETE_MAX}건까지 삭제 가능합니다.`
+              : code === "MISSING_CALL_IDS"
+                ? "선택된 콜이 없습니다."
+                : code;
+        throw new Error(friendly);
+      }
+
+      // 성공한 ID만 로컬 state에서 즉시 제거 (스킵/실패는 그대로 표시 유지)
+      const successIds = new Set(data.details?.success ?? []);
+      if (successIds.size > 0) {
+        setCalls((prev) => prev.filter((c) => !successIds.has(c.id)));
+      }
+      // 처리된 ID들은 선택에서 모두 해제 (skipped/failed도 다시 선택 안 함)
+      setSelectedIds(new Set());
+
+      const s = data.success ?? 0;
+      const k = data.skipped ?? 0;
+      const f = data.failed ?? 0;
+      let msg = `${s}건 삭제`;
+      if (k > 0) msg += ` · ${k}건 스킵`;
+      if (f > 0) msg += ` · ${f}건 실패`;
+      if (f > 0) toast.error(msg);
+      else if (k > 0) toast.message(msg);
+      else toast.success(msg);
+
+      // server 데이터 재동기화 (휴지통 카운트 등 다른 page 동기화 보조)
+      router.refresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "일괄 삭제 실패");
+    } finally {
+      setBulkDeleting(false);
+    }
+  }
+
   async function handleUpdateLocation() {
     if (typeof navigator === "undefined" || !navigator.geolocation) {
       toast.error("브라우저가 위치 정보를 지원하지 않습니다.");
@@ -568,6 +667,40 @@ export function CallList({
   }, [calls, currentUserId, filter, filterMine, location, radius, region, search, selectedDate, sortBy, technicianFilter, showTechnicianFilter]);
 
   const pagedCalls = useMemo(() => visible.slice(0, page * PAGE_SIZE), [visible, page]);
+
+  // visible 변동 시 selectedIds 자동 prune.
+  // 시나리오:
+  //   - 필터/검색 변경으로 일부 콜이 숨겨지면 선택에서 자동 해제
+  //   - 본인/타 admin이 단건 삭제로 콜이 제거되면 자동 해제
+  //   - realtime UPDATE로 deleted_at 채워진 콜이 제거되면 자동 해제
+  // → "안 보이는데 선택 상태 유지"로 인한 의도치 않은 bulk 삭제 방지.
+  // immutable 규칙: next는 항상 new Set, prev(selectedIds)는 forEach 만 사용.
+  useEffect(() => {
+    if (selectedIds.size === 0) return;
+    const visibleIds = new Set(visible.map((c) => c.id));
+    let changed = false;
+    const next = new Set<string>();
+    selectedIds.forEach((id) => {
+      if (visibleIds.has(id)) next.add(id);
+      else changed = true;
+    });
+    if (changed) setSelectedIds(next);
+  }, [visible, selectedIds]);
+
+  // 전체 선택은 visible(현재 필터 적용된 전체) 기준.
+  // 완료콜은 DB 트리거가 soft delete를 차단하므로 선택 대상에서 제외.
+  const selectableVisibleIds = useMemo(
+    () =>
+      visible
+        .filter((c) => c.status !== "completed" && !c.deleted_at)
+        .map((c) => c.id),
+    [visible],
+  );
+
+  function selectAllVisible() {
+    // 새 Set 생성 (selectableVisibleIds 배열 → Set 변환). 기존 prev 미터치.
+    setSelectedIds(new Set(selectableVisibleIds));
+  }
   const canLoadMore = visible.length > page * PAGE_SIZE;
 
   return (
@@ -780,6 +913,49 @@ export function CallList({
         )}
       </div>
 
+      {/* 삭제 권한 정책 (의도된 설계, future maintainer 주의):
+            admin      : 이 액션바(bulk soft delete) + 카드 단건 삭제 모두 가능
+            dispatcher : 카드 단건 삭제만 (액션바 안 보임). bulk는 영향 범위 ↑ 라 admin only.
+            technician : 어떤 삭제도 불가 (UI/API/DB 3중 차단).
+          이 가드를 변경하려면 /api/calls/bulk-delete 의 role 체크와 함께 수정 필요. */}
+      {isAdmin && (
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs sm:rounded-2xl sm:px-4 sm:py-2.5 sm:text-sm">
+          <span className="font-semibold text-slate-700">
+            선택 {selectedIds.size}건
+            {selectedIds.size >= BULK_DELETE_MAX ? (
+              <span className="ml-1 text-rose-600">(최대)</span>
+            ) : null}
+          </span>
+          <button
+            type="button"
+            onClick={selectAllVisible}
+            disabled={
+              bulkDeleting || selectableVisibleIds.length === 0
+            }
+            className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            title="현재 필터에 보이는 미완료/미삭제 콜 전체 선택"
+          >
+            전체 선택
+          </button>
+          <button
+            type="button"
+            onClick={clearSelection}
+            disabled={bulkDeleting || selectedIds.size === 0}
+            className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            선택 해제
+          </button>
+          <button
+            type="button"
+            onClick={handleBulkDelete}
+            disabled={bulkDeleting || selectedIds.size === 0}
+            className="ml-auto rounded-lg bg-rose-600 px-3 py-1 text-xs font-semibold text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {bulkDeleting ? "삭제 중..." : `선택 삭제 (${selectedIds.size})`}
+          </button>
+        </div>
+      )}
+
       {visible.length === 0 ? (
         <div className="rounded-3xl border border-dashed border-slate-300 bg-white px-4 py-10 text-center text-sm text-slate-500">
           {emptyText ?? "표시할 콜이 없습니다."}
@@ -801,12 +977,34 @@ export function CallList({
               location && call.latitude != null && call.longitude != null
                 ? getDistanceKm(location.lat, location.lng, call.latitude, call.longitude)
                 : null;
+            const checkable =
+              isAdmin && call.status !== "completed" && !call.deleted_at;
             return (
+              <div
+                key={call.id}
+                // admin: 좌측 체크박스 + 우측 details (gap-2).
+                // 비admin: 단일 자식이라 시각적으로 기존과 동일 (flex-1 details가 100%).
+                className="flex items-start gap-2"
+              >
+                {isAdmin && (
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.has(call.id)}
+                    onChange={() => toggleSelected(call.id)}
+                    disabled={!checkable || bulkDeleting}
+                    title={
+                      !checkable
+                        ? "완료/삭제된 콜은 선택 불가"
+                        : "선택"
+                    }
+                    aria-label="콜 선택"
+                    className="mt-3 h-5 w-5 flex-none cursor-pointer accent-rose-600 disabled:cursor-not-allowed disabled:opacity-40"
+                  />
+                )}
               <details
-  key={call.id}
   // 완료콜은 faded 회색 톤 (시각적으로 "끝남" 표시).
   // 신규콜은 white + emerald 강조. 그 외 white.
-  className={`group overflow-hidden rounded-xl border shadow-sm transition active:scale-[0.995] sm:rounded-2xl lg:rounded-[28px] ${
+  className={`group min-w-0 flex-1 overflow-hidden rounded-xl border shadow-sm transition active:scale-[0.995] sm:rounded-2xl lg:rounded-[28px] ${
     call.status === "completed"
       ? "border-slate-200 bg-slate-100/70 text-slate-500 opacity-80"
       : call.status === "new"
@@ -956,6 +1154,11 @@ export function CallList({
                       <p>{assignee ? assignee.name : "미배정"}</p>
                     </div>
                   </div>
+                  {/* 단건 soft delete 버튼.
+                      권한: admin + dispatcher 모두 허용 (운영 정책상 dispatcher의 단건 삭제 유지).
+                      technician 는 여기 자체에 도달 못 함 (조건문에서 제외).
+                      bulk 삭제는 위 액션바(admin only)에서 별도 처리.
+                      변경 시 /api/calls/delete 의 role 체크와 일관성 유지 필요. */}
                   {(currentUserRole === "admin" ||
                     currentUserRole === "dispatcher") &&
                     call.status !== "completed" && (
@@ -978,6 +1181,7 @@ export function CallList({
                   )}
                 </div>
               </details>
+              </div>
             );
           })}
           {canLoadMore && (
