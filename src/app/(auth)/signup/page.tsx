@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { SignUpForm } from "./SignUpForm";
 
-export const metadata = { title: "기사 회원가입 — 에어컨 콜풀 CRM" };
+export const metadata = { title: "기사 회원가입" };
 
 export default function SignUpPage() {
   return (

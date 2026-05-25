@@ -1,11 +1,28 @@
 import type { Metadata, Viewport } from "next";
 import { Toaster } from "sonner";
 import "./globals.css";
-import { BRAND_NAME, BRAND_SHORT, BRAND_COLOR } from "@/lib/brand";
+import {
+  BRAND_NAME,
+  BRAND_SHORT,
+  BRAND_COLOR,
+  BRAND_DOMAIN,
+  BRAND_DESCRIPTION,
+} from "@/lib/brand";
 
+// 외부 노출 메타데이터 전수 정리:
+//   - metadataBase: 모든 상대 경로(og:image 등) 의 절대화 기준.
+//   - title.template: 각 페이지의 짧은 title 을 자동으로 "X | 출장시민기사" 으로.
+//   - openGraph / twitter: 카톡/Slack/페이스북/X 링크 미리보기 메타.
+//   - 디자인 OG 이미지(1200x630) 미보유 → 임시로 /icon-512x512.png 사용.
+//     향후 전용 OG 이미지 만들면 url 만 교체.
 export const metadata: Metadata = {
-  title: BRAND_NAME,
-  description: "출장 수리 기사 배정 및 고객 방문 관리 시스템",
+  metadataBase: new URL(BRAND_DOMAIN),
+  title: {
+    default: BRAND_NAME,
+    template: `%s | ${BRAND_NAME}`,
+  },
+  description: BRAND_DESCRIPTION,
+  applicationName: BRAND_NAME,
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
@@ -13,9 +30,34 @@ export const metadata: Metadata = {
     title: BRAND_SHORT,
   },
   icons: {
-   icon: "/favicon-32x32.png",
-   apple: "/icon-192x192.png",
- },
+    icon: "/favicon-32x32.png",
+    apple: "/icon-192x192.png",
+  },
+  openGraph: {
+    type: "website",
+    siteName: BRAND_NAME,
+    title: BRAND_NAME,
+    description: BRAND_DESCRIPTION,
+    url: BRAND_DOMAIN,
+    locale: "ko_KR",
+    images: [
+      {
+        url: "/icon-512x512.png",
+        width: 512,
+        height: 512,
+        alt: BRAND_NAME,
+      },
+    ],
+  },
+  twitter: {
+    card: "summary",
+    title: BRAND_NAME,
+    description: BRAND_DESCRIPTION,
+    images: ["/icon-512x512.png"],
+  },
+  formatDetection: {
+    telephone: false,
+  },
 };
 
 export const viewport: Viewport = {

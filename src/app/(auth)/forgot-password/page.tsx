@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { ForgotPasswordForm } from "./ForgotPasswordForm";
 
-export const metadata = { title: "비밀번호 재설정 — 에어컨 콜풀 CRM" };
+export const metadata = { title: "비밀번호 재설정" };
 
 export default function ForgotPasswordPage({
   searchParams,

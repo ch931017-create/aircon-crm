@@ -1,7 +1,9 @@
 import Link from "next/link";
 import { LoginForm } from "./LoginForm";
+import { BRAND_NAME } from "@/lib/brand";
 
-export const metadata = { title: "로그인 — 에어컨 콜풀 CRM" };
+// title 만 짧게 지정 → layout.tsx 의 template 가 "로그인 | 출장시민기사" 으로 자동 조합.
+export const metadata = { title: "로그인" };
 
 export default function LoginPage({
   searchParams,
@@ -13,7 +15,7 @@ export default function LoginPage({
   return (
     <main className="mx-auto flex min-h-screen max-w-sm flex-col justify-center px-6">
       <div className="mb-8 text-center">
-        <h1 className="text-2xl font-bold text-brand-700">에어컨 콜풀 CRM</h1>
+        <h1 className="text-2xl font-bold text-brand-700">{BRAND_NAME}</h1>
         <p className="mt-1 text-sm text-slate-500">계정으로 로그인하세요</p>
       </div>
 

@@ -1,7 +1,7 @@
 import { requireRole } from "@/lib/auth";
 import { CallForm } from "@/components/calls/CallForm";
 
-export const metadata = { title: "콜 등록 — 에어컨 콜풀 CRM" };
+export const metadata = { title: "콜 등록" };
 
 export default async function NewCallPage() {
   await requireRole("dispatcher", "admin");

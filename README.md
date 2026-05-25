@@ -1,6 +1,9 @@
-# 에어컨 콜풀 CRM
+# 출장시민기사
 
 출장 에어컨 수리업체용 콜 관리 시스템. 일반 자동배차가 아닌 **수동 선점(claim) 모델**.
+
+- 운영 도메인: https://출장시민기사.kr
+- 내부 코드명: `aircon-crm` (package.json, service worker cache name 등 내부 식별자 유지)
 
 ## 셋업
 

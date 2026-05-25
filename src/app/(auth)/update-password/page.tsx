@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { UpdatePasswordForm } from "./UpdatePasswordForm";
 
-export const metadata = { title: "새 비밀번호 설정 — 에어컨 콜풀 CRM" };
+export const metadata = { title: "새 비밀번호 설정" };
 
 // force-dynamic: session 검증 + cookie 의존이라 캐싱 불가
 export const dynamic = "force-dynamic";
