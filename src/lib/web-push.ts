@@ -26,6 +26,17 @@ export interface PushPayload {
   body: string;
   url?: string;
   tag?: string;
+  // 강화 옵션 (신규 콜 알림 같은 중요 알림용).
+  // 미지정 시 service worker가 default 적용 → 기존 알림(완료/배정) 동작 변화 없음.
+  // requireInteraction: 사용자가 닫을 때까지 알림 유지 (데스크톱/일부 모바일).
+  // renotify       : 같은 tag 의 새 알림에서 다시 울림 (default: false = silent replace).
+  // vibrate        : Android 진동 패턴 [on, off, on, ...] ms. iOS 무시 (시스템 햅틱).
+  // actions        : 알림 액션 버튼. Chrome/Edge/Android 지원. iOS Safari PWA 일부.
+  //                  service worker notificationclick 에서 event.action 으로 분기.
+  requireInteraction?: boolean;
+  renotify?: boolean;
+  vibrate?: number[];
+  actions?: Array<{ action: string; title: string }>;
 }
 
 interface PushSubscriptionRecord {

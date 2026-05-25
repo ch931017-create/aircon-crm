@@ -204,6 +204,16 @@ function isCacheable(response) {
 // =========================================================
 // Push 알림 (Web Push)
 // =========================================================
+// payload 지원 필드 (src/lib/web-push.ts PushPayload 와 동기화):
+//   title, body, url, tag — 기본
+//   requireInteraction    — 사용자가 닫을 때까지 유지 (중요 알림)
+//   renotify              — 같은 tag 새 알림 시 다시 울림
+//   vibrate               — Android 진동 패턴 (iOS 무시)
+//   actions               — 액션 버튼 [{action, title}]. 클릭 시 event.action 으로 분기.
+//
+// 브라우저/OS 정책:
+//   - 강제 소리 재생은 불가. OS 알림 사운드/햅틱은 사용자 시스템 설정 의존.
+//   - 앱이 켜져 있을 때의 in-app 사운드는 별도(/calls 페이지의 audio context).
 self.addEventListener("push", (event) => {
   let data = {};
   try {
@@ -218,14 +228,35 @@ self.addEventListener("push", (event) => {
     icon: "/icon-192x192.png",
     badge: "/icon-192x192.png",
     tag: data.tag || "default",
+    // data 에 원본 payload 일부 보존 → notificationclick 에서 url/action 접근.
     data: { url: targetUrl },
-    requireInteraction: false,
+    requireInteraction:
+      typeof data.requireInteraction === "boolean"
+        ? data.requireInteraction
+        : false,
+    renotify: typeof data.renotify === "boolean" ? data.renotify : false,
   };
+  // vibrate 패턴 (Android). 미지정 시 시스템 default.
+  if (Array.isArray(data.vibrate) && data.vibrate.length > 0) {
+    options.vibrate = data.vibrate;
+  }
+  // actions 배열 (지원 브라우저만 노출, 미지원은 자동 무시).
+  if (Array.isArray(data.actions) && data.actions.length > 0) {
+    options.actions = data.actions;
+  }
   event.waitUntil(self.registration.showNotification(title, options));
 });
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
+
+  // 액션 버튼 클릭 처리:
+  //   - "dismiss" : 그냥 닫기 (위에서 이미 close, 추가 동작 X)
+  //   - 그 외(또는 본체 클릭) : url 로 이동
+  if (event.action === "dismiss") {
+    return;
+  }
+
   const targetUrl =
     (event.notification.data && event.notification.data.url) || "/";
 

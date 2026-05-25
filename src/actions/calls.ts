@@ -6,7 +6,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createCallSchema } from "@/lib/schemas";
 import { geocodeAddress } from "@/lib/geocoding";
-import { sendPushToProfile } from "@/lib/web-push";
+import { sendPushToProfile, sendPushToProfiles } from "@/lib/web-push";
 
 export interface CreateCallState {
   error?: string;
@@ -116,6 +116,57 @@ export async function createCallAction(
       console.warn("[geocode-backfill] exception:", callId, err);
     }
   })();
+
+  // (3) 신규 콜 푸시 — 활성 승인 technician 전체에게 발송.
+  //     운영 정책:
+  //       - 콜은 자동배차가 아닌 수동 선점(claim) 모델 → 등록 즉시 기사들이 알아야 잡음.
+  //       - admin/dispatcher 는 발송 대상 아님 (등록한 본인이 dispatcher 인 경우 다수).
+  //       - technician 은 push opt-out 컬럼 없음 (운영 정책: 무조건 수신).
+  //     민감정보 보호:
+  //       - title 에 지역구(district) 만 노출, 그 외 정보 노출 X.
+  //       - body 는 일반 안내문 (고객명/전화/주소/증상 미포함).
+  //     성능:
+  //       - service_role admin client 로 RLS 우회하여 technician id 조회.
+  //       - sendPushToProfiles 가 Promise.allSettled 로 N 동시 발송 (~1s 이내).
+  //       - 410/404 endpoint 자동 cleanup 포함.
+  //     실패 처리:
+  //       - try/catch 로 흡수. push 실패가 콜 등록 응답에 영향 0.
+  try {
+    const adminForPush = createAdminClient();
+    const { data: techs } = await adminForPush
+      .from("profiles")
+      .select("id")
+      .eq("role", "technician")
+      .eq("is_active", true)
+      .eq("approval_status", "approved");
+
+    const techIds = (techs ?? []).map((t) => t.id as string);
+    if (techIds.length > 0) {
+      const district = input.district?.trim();
+      // 🚨 prefix — 잠금화면 / Android notification tray 시인성 강화 목적.
+      // 신규 콜은 기사가 빠르게 인지해야 하는 가장 중요한 푸시이므로 의도된 강조.
+      const title = district ? `🚨 ${district} 콜++` : "🚨 신규 콜++";
+      await sendPushToProfiles(techIds, {
+        title,
+        // 민감정보 미포함. 상세는 앱에서 확인.
+        body: "새로운 콜이 등록됐습니다. 앱에서 확인하세요.",
+        url: `/calls/${callId}`,
+        // callId 기반 tag — 다른 콜 알림에 덮이지 않음.
+        tag: `new-call-${callId}`,
+        // 중요 알림: 사용자가 닫을 때까지 유지 + 진동.
+        // 브라우저/OS 정책상 강제 소리 재생은 불가 (시스템 사운드/햅틱 설정 의존).
+        requireInteraction: true,
+        renotify: true,
+        vibrate: [200, 100, 200, 100, 200],
+        actions: [
+          { action: "open", title: "콜 보기" },
+          { action: "dismiss", title: "닫기" },
+        ],
+      });
+    }
+  } catch (err) {
+    console.warn("[create-call] new-call push failed:", callId, err);
+  }
 
   // redirect 제거 — client(CallForm)가 success 감지 후 form reset + router.refresh
   revalidatePath("/calls");
