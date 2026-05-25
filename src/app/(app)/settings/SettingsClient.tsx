@@ -111,13 +111,21 @@ export function SettingsClient({ role, notifyCompletion }: Props) {
 
   // 상태 derive
   const localExists = localSubEndpoint !== null;
-  const serverExists =
+  // 서버측 본인 등록이 "현재 디바이스의 endpoint" 와 매칭되어야 진짜 동기화 상태.
+  // 다른 디바이스 row 만 있는 경우는 currentDeviceServerExists=false 로 본다.
+  const currentDeviceServerExists =
     serverEndpoints !== null &&
     localSubEndpoint !== null &&
     serverEndpoints.includes(localSubEndpoint);
-  // permission=granted + 로컬 sub 있음 + 서버에 그 endpoint 없음 → 재등록 필요.
+  // 서버에 본인 row 가 하나라도 있는지 (다른 디바이스 포함). 운영 안내용 표시.
+  const anyServerRecord =
+    serverEndpoints !== null && serverEndpoints.length > 0;
+  // 재등록 필요 조건: permission=granted + 로컬 있음 + 현재 디바이스가 서버 미등록.
   const mismatch =
-    permission === "granted" && localExists && !serverExists && !statusLoading;
+    permission === "granted" &&
+    localExists &&
+    !currentDeviceServerExists &&
+    !statusLoading;
 
   function toggleCallNotif(next: boolean) {
     setCallNotifEnabled(next);
@@ -183,11 +191,19 @@ export function SettingsClient({ role, notifyCompletion }: Props) {
   async function handleDisablePush() {
     setBusy(true);
     const ok = await unsubscribeUserFromPush();
+    // Optimistic state update — refetch 결과 늦거나 race 있어도 UI 즉시 일관성 유지.
+    //   unsubscribeUserFromPush 가 success(true) 반환 → 로컬/서버 모두 정리되었다고 간주.
+    //   refetchPushStatus 가 별개로 한 번 더 동기화해서 실제 상태 보강.
+    setLocalSubEndpoint(null);
+    setServerEndpoints([]);
     setBusy(false);
     setPermission(getPushPermissionState());
+    // 보강 동기화 — 만약 optimistic 과 실제가 다르면 진짜 상태로 정정.
     await refetchPushStatus();
     if (ok) {
-      toast.success("알림 구독이 해제되었습니다 (브라우저 권한은 별도로 끄세요)");
+      toast.success(
+        "알림 구독이 해제되었습니다 (브라우저 권한은 별도로 끄세요)",
+      );
     } else {
       // unsubscribeUserFromPush 가 정책적으로 거의 항상 true → false 면 catastrophic.
       toast.error(
@@ -279,10 +295,19 @@ export function SettingsClient({ role, notifyCompletion }: Props) {
             </strong>
           </div>
           <div>
-            서버 등록:{" "}
+            서버 등록(현재 디바이스):{" "}
             <strong>
-              {statusLoading ? "확인중..." : serverExists ? "있음" : "없음"}
+              {statusLoading
+                ? "확인중..."
+                : currentDeviceServerExists
+                  ? "있음"
+                  : "없음"}
             </strong>
+            {!statusLoading && !localExists && anyServerRecord && (
+              <span className="ml-2 text-slate-500">
+                (다른 디바이스 등록만 있음)
+              </span>
+            )}
           </div>
           {mismatch && (
             <div className="mt-1 rounded-lg bg-amber-100 px-2 py-1 text-amber-800">
@@ -292,6 +317,13 @@ export function SettingsClient({ role, notifyCompletion }: Props) {
           )}
         </div>
 
+        {/* 버튼 분기 정책 (위에서부터 우선):
+              1. 미지원                           → 안내 텍스트
+              2. 권한 차단                        → 차단 안내
+              3. mismatch (local✓ + serverDevice✗) → "푸시 재등록"
+              4. local✓ + serverDevice✓           → "알림 구독 해제"
+              5. 그 외 (local✗ 등)                → "알림 켜기"
+            permission === "granted" 단독 분기 X → 해제 후에도 버튼이 안 바뀌는 버그 회피. */}
         <div className="mt-4">
           {!supported ? (
             <p className="rounded-2xl bg-slate-50 px-3 py-2 text-xs text-slate-600">
@@ -312,23 +344,25 @@ export function SettingsClient({ role, notifyCompletion }: Props) {
             >
               {busy ? "재등록 중..." : "푸시 재등록"}
             </button>
-          ) : permission === "granted" ? (
+          ) : localExists && currentDeviceServerExists ? (
+            // 진짜 동기화된 상태에서만 해제 버튼 노출
             <button
               type="button"
               onClick={handleDisablePush}
               disabled={busy}
               className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
             >
-              알림 구독 해제
+              {busy ? "해제 중..." : "알림 구독 해제"}
             </button>
           ) : (
+            // local 없음 또는 server에 본인 row 없음 → 켜기/재등록
             <button
               type="button"
               onClick={handleEnablePush}
               disabled={busy}
               className="rounded-xl bg-brand-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-brand-700 disabled:opacity-60"
             >
-              알림 켜기
+              {busy ? "활성화 중..." : "알림 켜기"}
             </button>
           )}
         </div>

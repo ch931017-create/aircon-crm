@@ -194,26 +194,40 @@ export async function unsubscribeUserFromPush(): Promise<boolean> {
     }
 
     const subscription = await registration.pushManager.getSubscription();
-    if (!subscription) return true;
+    if (!subscription) {
+      console.log("[push] unsubscribe: no local subscription (already gone)");
+      return true;
+    }
 
     const endpoint = subscription.endpoint;
+    console.log("[push] unsubscribe: local subscription found, attempting...");
 
+    let localUnsubOk = false;
     try {
-      await subscription.unsubscribe();
+      localUnsubOk = await subscription.unsubscribe();
+      console.log(`[push] unsubscribe: local result=${localUnsubOk}`);
     } catch (err) {
       // 일부 브라우저에서 실패 가능 → 서버 삭제는 계속 시도
       console.warn(
-        "[push] subscription.unsubscribe() failed (continuing):",
+        "[push] subscription.unsubscribe() exception (continuing):",
         err,
       );
     }
 
     try {
-      await fetch("/api/push/unsubscribe", {
+      const res = await fetch("/api/push/unsubscribe", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ endpoint }),
       });
+      const data = (await res.json().catch(() => ({}))) as {
+        removed?: number;
+        success?: boolean;
+        error?: string;
+      };
+      console.log(
+        `[push] unsubscribe: server response status=${res.status} removed=${data.removed ?? "?"}`,
+      );
     } catch (err) {
       console.warn(
         "[push] /api/push/unsubscribe fetch failed (continuing):",
