@@ -1,7 +1,17 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { updateSession } from "@/lib/supabase/middleware";
 
-const PUBLIC_PATHS = ["/login", "/signup", "/health"];
+// /update-password 는 callback 후 recovery 세션이 있는 상태에서 접근하므로
+// 일반 보호 라우트와 동일하게 처리해도 동작함. 다만 reset 흐름을 명시적으로
+// 공용 경로로 두어 cookie 손실 등 edge case에서도 접근 가능하게 한다.
+const PUBLIC_PATHS = [
+  "/login",
+  "/signup",
+  "/health",
+  "/forgot-password",
+  "/update-password",
+  "/auth",
+];
 
 export async function middleware(request: NextRequest) {
   const { response, user } = await updateSession(request);

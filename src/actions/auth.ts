@@ -94,3 +94,80 @@ export async function signOutAction() {
   await supabase.auth.signOut();
   redirect("/login");
 }
+
+// =========================================================
+// 비밀번호 재설정 — 메일 전송 요청
+// =========================================================
+export interface RequestPasswordResetState {
+  error?: string;
+  notice?: string;
+}
+
+export async function requestPasswordResetAction(
+  _prev: RequestPasswordResetState,
+  formData: FormData,
+): Promise<RequestPasswordResetState> {
+  const email = String(formData.get("email") ?? "").trim();
+  if (!email) return { error: "이메일을 입력하세요." };
+
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL;
+  if (!appUrl) {
+    return { error: "서버 설정 오류입니다. 관리자에게 문의하세요." };
+  }
+
+  const supabase = createClient();
+  // 보안: 등록되지 않은 이메일도 동일한 응답 (account enumeration 방지)
+  // Supabase가 내부적으로 등록 여부 확인 후 발송. 실패해도 error UI에 노출 X.
+  await supabase.auth.resetPasswordForEmail(email, {
+    redirectTo: `${appUrl}/auth/callback?next=/update-password`,
+  });
+
+  return {
+    notice:
+      "비밀번호 재설정 메일을 전송했습니다. 메일함(스팸함 포함)을 확인하고 링크를 눌러주세요.",
+  };
+}
+
+// =========================================================
+// 새 비밀번호 설정 (재설정 링크 도달 후 세션 보유 상태에서 호출)
+// =========================================================
+export interface UpdatePasswordState {
+  error?: string;
+}
+
+export async function updatePasswordAction(
+  _prev: UpdatePasswordState,
+  formData: FormData,
+): Promise<UpdatePasswordState> {
+  const password = String(formData.get("password") ?? "");
+  const confirm = String(formData.get("confirm") ?? "");
+
+  if (password.length < 8) {
+    return { error: "비밀번호는 8자 이상이어야 합니다." };
+  }
+  if (password !== confirm) {
+    return { error: "두 비밀번호가 일치하지 않습니다." };
+  }
+
+  const supabase = createClient();
+  // 세션 검증: callback에서 exchangeCodeForSession 후 세션 존재해야 함.
+  // 링크 만료/이미 사용/직접 접근 등 세션 없는 경우 명시적 안내.
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return {
+      error:
+        "재설정 링크가 만료되었거나 유효하지 않습니다. /forgot-password 에서 다시 시도해주세요.",
+    };
+  }
+
+  const { error } = await supabase.auth.updateUser({ password });
+  if (error) {
+    return { error: `변경에 실패했습니다: ${error.message}` };
+  }
+
+  // 안전: 새 비밀번호로 다시 로그인하도록 세션 종료 후 로그인 페이지로
+  await supabase.auth.signOut();
+  redirect("/login?reset=ok");
+}
