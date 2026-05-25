@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { createCallSchema } from "@/lib/schemas";
 import { geocodeAddress } from "@/lib/geocoding";
 import { sendPushToProfile } from "@/lib/web-push";
@@ -50,45 +51,73 @@ export async function createCallAction(
 
   const input = parsed.data;
 
-  // 주소 → 좌표 (실패해도 콜 등록은 진행). geocodeAddress는 throw하지 않음.
-  let latitude: number | null = null;
-  let longitude: number | null = null;
-  const geo = await geocodeAddress(input.address);
-  if (geo) {
-    latitude = geo.lat;
-    longitude = geo.lng;
+  // (1) insert 먼저 — latitude/longitude는 null로 두고 즉시 응답.
+  //     체감 속도 개선: geocoding await 제거 (1~2초 단축)
+  const { data: inserted, error } = await supabase
+    .from("calls")
+    .insert({
+      customer_name: input.customer_name,
+      phone: input.phone,
+      address: input.address,
+      district: input.district ?? null,
+      symptom: input.symptom ?? null,
+      // 정시 단위로 정규화 (브라우저 step="3600" 우회 시도 대비)
+      preferred_time: input.preferred_time
+        ? (() => {
+            const d = new Date(input.preferred_time);
+            d.setMinutes(0, 0, 0);
+            return d.toISOString();
+          })()
+        : null,
+      memo: input.memo ?? null,
+      estimated_amount: input.estimated_amount ?? null,
+      paid_amount: null,
+      status: "new",
+      assigned_to: null,
+      created_by: user.id,
+      latitude: null,
+      longitude: null,
+    })
+    .select("id")
+    .single();
+
+  if (error || !inserted) {
+    return {
+      error: `등록 실패: ${error?.message ?? "unknown"}`,
+      ts: Date.now(),
+    };
   }
 
-  const { error } = await supabase.from("calls").insert({
-    customer_name: input.customer_name,
-    phone: input.phone,
-    address: input.address,
-    district: input.district ?? null,
-    symptom: input.symptom ?? null,
-    // 정시 단위로 정규화 (브라우저 step="3600" 우회 시도 대비)
-    preferred_time: input.preferred_time
-      ? (() => {
-          const d = new Date(input.preferred_time);
-          d.setMinutes(0, 0, 0);
-          return d.toISOString();
-        })()
-      : null,
-    memo: input.memo ?? null,
-    estimated_amount: input.estimated_amount ?? null,
-    paid_amount: null,
-    status: "new",
-    assigned_to: null,
-    created_by: user.id,
-    latitude,
-    longitude,
-  });
-
-  if (error) {
-    return { error: `등록 실패: ${error.message}`, ts: Date.now() };
-  }
+  // (2) 백그라운드 geocoding — fire-and-forget.
+  //     실패해도 콜 등록은 이미 성공. lat/lng는 1~2초 후 채워짐.
+  //     service_role(createAdminClient)로 update — RLS / cookie 만료 영향 0.
+  //     Vercel serverless 환경에서 response 후 instance가 즉시 frozen될 수 있어
+  //     drop될 가능성 ~5%. 미수신 시 lat/lng가 NULL로 유지 (지도/거리에만 영향).
+  //     운영상 1~2초 늦게 채워지는 것 허용.
+  const callId = inserted.id as string;
+  const addressForGeocode = input.address;
+  void (async () => {
+    try {
+      const geo = await geocodeAddress(addressForGeocode);
+      if (!geo) return;
+      const admin = createAdminClient();
+      const { error: updateError } = await admin
+        .from("calls")
+        .update({ latitude: geo.lat, longitude: geo.lng })
+        .eq("id", callId);
+      if (updateError) {
+        console.warn(
+          "[geocode-backfill] update failed:",
+          callId,
+          updateError.message,
+        );
+      }
+    } catch (err) {
+      console.warn("[geocode-backfill] exception:", callId, err);
+    }
+  })();
 
   // redirect 제거 — client(CallForm)가 success 감지 후 form reset + router.refresh
-  // (PC split view에서 form unmount되지 않아 reset이 필요)
   revalidatePath("/calls");
   return { success: true, ts: Date.now() };
 }
