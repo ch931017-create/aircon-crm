@@ -131,21 +131,44 @@ export async function createCallAction(
   //       - 410/404 endpoint 자동 cleanup 포함.
   //     실패 처리:
   //       - try/catch 로 흡수. push 실패가 콜 등록 응답에 영향 0.
+  // [debug] 파이프라인 진단 로그. Vercel Functions Logs 필터: "[new-call-push]"
+  //   start → technicians eligible → send invoked → send returned
+  // sendPushToProfiles 내부의 "[send-push]" 로그도 같이 확인.
+  console.log(
+    `[new-call-push] start callId=${callId} district="${input.district ?? ""}"`,
+  );
   try {
     const adminForPush = createAdminClient();
-    const { data: techs } = await adminForPush
+    const { data: techs, error: techsError } = await adminForPush
       .from("profiles")
       .select("id")
       .eq("role", "technician")
       .eq("is_active", true)
       .eq("approval_status", "approved");
 
+    if (techsError) {
+      console.warn(
+        `[new-call-push] technicians query failed callId=${callId}: ${techsError.message}`,
+      );
+    }
+
     const techIds = (techs ?? []).map((t) => t.id as string);
-    if (techIds.length > 0) {
+    console.log(
+      `[new-call-push] technicians eligible callId=${callId} count=${techIds.length}`,
+    );
+
+    if (techIds.length === 0) {
+      console.warn(
+        `[new-call-push] no eligible technicians (technician+active+approved) callId=${callId} — push skipped`,
+      );
+    } else {
       const district = input.district?.trim();
       // 🚨 prefix — 잠금화면 / Android notification tray 시인성 강화 목적.
       // 신규 콜은 기사가 빠르게 인지해야 하는 가장 중요한 푸시이므로 의도된 강조.
       const title = district ? `🚨 ${district} 콜++` : "🚨 신규 콜++";
+      console.log(
+        `[new-call-push] send invoked callId=${callId} title="${title}" targets=${techIds.length}`,
+      );
       await sendPushToProfiles(techIds, {
         title,
         // 민감정보 미포함. 상세는 앱에서 확인.
@@ -163,9 +186,12 @@ export async function createCallAction(
           { action: "dismiss", title: "닫기" },
         ],
       });
+      console.log(
+        `[new-call-push] send returned callId=${callId} (실발송 결과는 [send-push] 로그 참조)`,
+      );
     }
   } catch (err) {
-    console.warn("[create-call] new-call push failed:", callId, err);
+    console.warn("[new-call-push] exception callId=", callId, err);
   }
 
   // redirect 제거 — client(CallForm)가 success 감지 후 form reset + router.refresh

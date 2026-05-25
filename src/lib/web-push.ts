@@ -54,11 +54,26 @@ export async function sendPushToProfiles(
   profileIds: string[],
   payload: PushPayload,
 ): Promise<void> {
-  if (profileIds.length === 0) return;
-  if (!ensureVapidConfigured()) {
-    console.warn("[web-push] VAPID env not configured, skipping send");
+  // [debug] 파이프라인 단계별 로그. Vercel Functions Logs 필터: "[send-push]"
+  //   env exists → subscriptions count → per-send result → summary
+  // 민감값(키/endpoint 전체)은 로그에 안 찍음. 존재 여부 boolean / endpoint 마스킹만.
+  console.log(
+    `[send-push] env exists public=${!!VAPID_PUBLIC} private=${!!VAPID_PRIVATE} subject=${!!VAPID_SUBJECT}`,
+  );
+
+  if (profileIds.length === 0) {
+    console.log("[send-push] 0 profileIds — early return");
     return;
   }
+  if (!ensureVapidConfigured()) {
+    console.warn(
+      "[send-push] VAPID env not configured (NEXT_PUBLIC_VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY / VAPID_SUBJECT 누락) — skipping send",
+    );
+    return;
+  }
+  console.log(
+    `[send-push] start profileIds=${profileIds.length} title="${payload.title}" tag="${payload.tag ?? ""}"`,
+  );
 
   const admin = createAdminClient();
   const { data: subs, error } = await admin
@@ -67,13 +82,28 @@ export async function sendPushToProfiles(
     .in("profile_id", profileIds);
 
   if (error) {
-    console.warn("[web-push] failed to load subscriptions:", error.message);
+    console.warn("[send-push] failed to load subscriptions:", error.message);
     return;
   }
-  if (!subs || subs.length === 0) return;
+  const subCount = subs?.length ?? 0;
+  console.log(
+    `[send-push] subscriptions found for profileIds count=${subCount}`,
+  );
+  if (!subs || subs.length === 0) {
+    console.warn(
+      "[send-push] no subscriptions for given profileIds — 기사 디바이스가 /settings 에서 알림 구독 완료했는지 push_subscriptions 테이블에서 직접 확인 필요",
+    );
+    return;
+  }
 
   const payloadStr = JSON.stringify(payload);
   const invalidIds: string[] = [];
+  let okCount = 0;
+  let failCount = 0;
+
+  // endpoint 일부만 마스킹해서 로그에 노출 (전체는 PII).
+  const maskEndpoint = (ep: string) =>
+    ep.length > 50 ? `${ep.slice(0, 30)}...${ep.slice(-10)}` : ep;
 
   await Promise.allSettled(
     (subs as PushSubscriptionRecord[]).map(async (sub) => {
@@ -85,15 +115,20 @@ export async function sendPushToProfiles(
           },
           payloadStr,
         );
+        okCount++;
       } catch (err: unknown) {
         const status = (err as { statusCode?: number })?.statusCode;
+        const masked = maskEndpoint(sub.endpoint);
         if (status === 404 || status === 410) {
           // 만료/무효 구독 → 정리 대상
           invalidIds.push(sub.id);
+          console.log(
+            `[send-push] expired endpoint cleanup scheduled status=${status} endpoint=${masked}`,
+          );
         } else {
+          failCount++;
           console.warn(
-            "[web-push] send failed:",
-            status,
+            `[send-push] send failed status=${status} endpoint=${masked} body=`,
             (err as { body?: string })?.body,
           );
         }
@@ -101,8 +136,24 @@ export async function sendPushToProfiles(
     }),
   );
 
+  console.log(
+    `[send-push] summary ok=${okCount} expired=${invalidIds.length} other_failed=${failCount} total=${subCount}`,
+  );
+
   if (invalidIds.length > 0) {
-    await admin.from("push_subscriptions").delete().in("id", invalidIds);
+    const { error: delError } = await admin
+      .from("push_subscriptions")
+      .delete()
+      .in("id", invalidIds);
+    if (delError) {
+      console.warn(
+        `[send-push] cleanup expired subs failed: ${delError.message}`,
+      );
+    } else {
+      console.log(
+        `[send-push] expired subs cleaned up count=${invalidIds.length}`,
+      );
+    }
   }
 }
 

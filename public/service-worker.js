@@ -223,6 +223,16 @@ self.addEventListener("push", (event) => {
   }
   const title = data.title || "출장시민";
   const targetUrl = typeof data.url === "string" ? data.url : "/";
+
+  // [debug] device-side push 진단 로그. Android: chrome://inspect → Service Workers.
+  // iOS Safari Develop 메뉴(연결된 iPhone PWA)의 SW 콘솔에서 확인.
+  console.log("[SW push] received", {
+    hasData: !!event.data,
+    title,
+    tag: data.tag || "default",
+    url: targetUrl,
+  });
+
   const options = {
     body: data.body || "새 알림이 있습니다.",
     icon: "/icon-192x192.png",
@@ -244,7 +254,12 @@ self.addEventListener("push", (event) => {
   if (Array.isArray(data.actions) && data.actions.length > 0) {
     options.actions = data.actions;
   }
-  event.waitUntil(self.registration.showNotification(title, options));
+  event.waitUntil(
+    self.registration.showNotification(title, options).then(
+      () => console.log("[SW push] showNotification resolved", { tag: data.tag }),
+      (err) => console.warn("[SW push] showNotification failed", err),
+    ),
+  );
 });
 
 self.addEventListener("notificationclick", (event) => {
