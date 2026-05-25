@@ -643,7 +643,7 @@ export function CallList({
                 aria-expanded={filterPanelOpen}
                 className="ml-auto inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
               >
-                필터 설정
+                {filterPanelOpen ? "상세 검색 접기" : "상세 검색 펼쳐보기"}
                 <ChevronDown
                   size={14}
                   className={`transition-transform ${filterPanelOpen ? "rotate-180" : ""}`}
@@ -819,7 +819,18 @@ export function CallList({
                     <p className="truncate">{call.symptom ?? "증상 없음"}</p>
                   </div>
                   <div className="text-[11px] sm:text-[13px]">{formatPreferredTime(call.preferred_time)}</div>
-                  <div className="text-[11px] font-medium sm:text-[13px]">{call.estimated_amount != null ? formatKRW(call.estimated_amount) : "-"}</div>
+                  <div className="text-[11px] font-medium sm:text-[13px]">
+                    {(() => {
+                      // 완료 콜은 기사가 입력한 실제 결제금액(paid_amount) 우선,
+                      // 미입력 시 예상금액(estimated_amount) fallback.
+                      // 그 외 상태는 예상금액 그대로.
+                      const display =
+                        call.status === "completed"
+                          ? (call.paid_amount ?? call.estimated_amount)
+                          : call.estimated_amount;
+                      return display != null ? formatKRW(display) : "-";
+                    })()}
+                  </div>
                <div>
   <div className="flex flex-wrap items-center gap-1">
     <StatusBadge status={call.status} />
