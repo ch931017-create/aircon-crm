@@ -10,11 +10,19 @@ export default async function MySettlementsPage() {
   const user = await requireRole("technician");
   const supabase = createClient();
 
+  // MySettlementsClient + computeCallSettlement/summarizeSettlements 사용 13개 컬럼만 select
+  // payload 약 60% 축소 (500건 × 30+ col → 500건 × 13 col)
   const [{ data: callsData }, { data: profileData }, { data: settingsData }] =
     await Promise.all([
       supabase
         .from("calls")
-        .select("*")
+        .select(
+          "id,customer_name,district,address," +
+            "completed_at," +
+            "payment_method,payment_status,settlement_status," +
+            "status,assigned_to," +
+            "paid_amount,technician_amount,tax_included",
+        )
         .eq("assigned_to", user.id) // 1차 가드: 서버 쿼리에서 본인 콜만
         .eq("status", "completed")
         .order("completed_at", { ascending: false })
@@ -33,7 +41,7 @@ export default async function MySettlementsPage() {
 
   // 2차 가드: RLS의 calls_select_all 정책으로 다른 콜이 섞일 여지가 0이지만,
   // defense-in-depth로 클라이언트에 넘기기 직전에 본인 콜만 한 번 더 필터.
-  const calls = ((callsData ?? []) as CallRow[]).filter(
+  const calls = ((callsData ?? []) as unknown as CallRow[]).filter(
     (call) => call.assigned_to === user.id,
   );
   const profile = (profileData ?? null) as Pick<

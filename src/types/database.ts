@@ -102,6 +102,9 @@ export interface CallRow {
   deleted_at: string | null;
   deleted_by: string | null;
   delete_reason: string | null;
+  // 운영 DB에 존재하지만 마이그레이션 파일에 정의되지 않은 컬럼 (Dashboard 수동 추가).
+  // select string 추론 통과를 위해 타입에 명시. 동적 접근만 있고 마이그레이션화는 별도 작업.
+  scheduled_date: string | null;
   [key: string]: unknown;
 }
 

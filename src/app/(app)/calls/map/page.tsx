@@ -16,10 +16,15 @@ export default async function CallsMapPage() {
     user.profile.role === "admin" || user.profile.role === "dispatcher";
 
   // 기사 위치는 admin/dispatcher만 조회 (RLS는 모두 허용하지만 운영 정책상 컬럼 노출 차단)
+  // CallMapView가 실제 사용하는 9개 컬럼만 select (payload 70% 축소)
   const [{ data: callsData }, techResult] = await Promise.all([
     supabase
       .from("calls")
-      .select("*")
+      .select(
+        "id,customer_name,district,address,symptom," +
+          "status,assigned_to," +
+          "latitude,longitude",
+      )
       .order("created_at", { ascending: false })
       .limit(200),
     canSeeTechnicians
@@ -33,7 +38,7 @@ export default async function CallsMapPage() {
       : Promise.resolve({ data: [] as TechnicianLocation[] }),
   ]);
 
-  const calls = (callsData ?? []) as CallRow[];
+  const calls = (callsData ?? []) as unknown as CallRow[];
   const technicians = ((techResult as { data: TechnicianLocation[] | null }).data ?? [])
     .filter(
       (t): t is TechnicianLocation =>
