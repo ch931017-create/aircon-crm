@@ -5,6 +5,7 @@ import { format } from "date-fns";
 import { ko } from "date-fns/locale";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { ChevronDown } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { StatusBadge } from "./StatusBadge";
 import { formatKRW } from "@/lib/utils";
@@ -126,6 +127,10 @@ export function CallList({
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [deleteLoadingId, setDeleteLoadingId] = useState<string | null>(null);
+  // 일반 레이아웃 필터 패널 accordion (기본 접힘 — 모바일 세로 공간 절약).
+  // 같은 탭/세션 동안만 펼침 상태 유지 (페이지 이동 후 돌아와도 유지).
+  // sessionStorage 사용 → 브라우저/PWA 재시작 시 다시 default(접힘).
+  const [filterPanelOpen, setFilterPanelOpen] = useState<boolean>(false);
   const [notificationEnabled, setNotificationEnabled] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>("default");
@@ -165,6 +170,41 @@ export function CallList({
     if (typeof window === "undefined") return;
     window.localStorage.setItem("callNotificationSoundEnabled", soundEnabled ? "true" : "false");
   }, [soundEnabled]);
+
+  // /settings 페이지(다른 탭 또는 같은 탭 SPA 이동)에서 변경된 알림 설정을
+  // 실시간 반영. 같은 탭은 컴포넌트 재마운트 시 위 useEffect로 읽지만,
+  // 다른 탭 동시 사용 케이스 대비 storage 이벤트로 동기화.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handler = (e: StorageEvent) => {
+      if (e.key === "callNotificationEnabled" && e.newValue !== null) {
+        setNotificationEnabled(e.newValue === "true");
+      }
+      if (e.key === "callNotificationSoundEnabled" && e.newValue !== null) {
+        setSoundEnabled(e.newValue === "true");
+      }
+    };
+    window.addEventListener("storage", handler);
+    return () => window.removeEventListener("storage", handler);
+  }, []);
+
+  // 필터 패널 펼침 상태 sessionStorage 동기화 (탭/세션 단위 유지).
+  // 마운트 시 1회 읽기: 사용자가 페이지 이동 후 돌아오면 이전 상태 복원.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (window.sessionStorage.getItem("callListFilterPanelOpen") === "true") {
+      setFilterPanelOpen(true);
+    }
+  }, []);
+
+  // 사용자가 toggle할 때마다 저장. 브라우저 종료 시 자동 폐기.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.sessionStorage.setItem(
+      "callListFilterPanelOpen",
+      filterPanelOpen ? "true" : "false",
+    );
+  }, [filterPanelOpen]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !notificationEnabled || typeof Notification === "undefined") return;
@@ -516,7 +556,7 @@ export function CallList({
 
   return (
     <div className="space-y-4">
-      <div className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm lg:sticky lg:top-2 lg:z-10">
+      <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm sm:rounded-3xl sm:p-4 lg:sticky lg:top-2 lg:z-10">
         {filterMine ? (
           <div className="space-y-3">
             <div className="flex items-center justify-between gap-3">
@@ -579,177 +619,145 @@ export function CallList({
             </div>
           </div>
         ) : (
-          <div className="grid gap-3 xl:grid-cols-[1.7fr_1.1fr_1.2fr]">
-            <div className="space-y-3">
-              <div className="flex flex-wrap gap-2">
-                {STATUS_FILTERS.map((item) => (
-                  <button
-                    key={item.key}
-                    type="button"
-                    onClick={() => setFilter(item.key)}
-                    className={
-                      filter === item.key
-                        ? "rounded-full bg-brand-600 px-3 py-1 text-xs font-semibold text-white"
-                        : "rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600"
-                    }
-                  >
-                    {item.label}
-                  </button>
-                ))}
-              </div>
-              <div
-                className={
-                  showTechnicianFilter
-                    ? "grid gap-2 sm:grid-cols-5"
-                    : "grid gap-2 sm:grid-cols-4"
-                }
+          // 일반 레이아웃: STATUS_FILTERS는 항상 노출, 그 외 필터는 accordion 안.
+          // 모바일 세로 공간 절약 + 검색/희망일/지역/반경 input은 펼침 시 풀폭 가까이.
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center gap-2">
+              {STATUS_FILTERS.map((item) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  onClick={() => setFilter(item.key)}
+                  className={
+                    filter === item.key
+                      ? "rounded-full bg-brand-600 px-3 py-1 text-xs font-semibold text-white"
+                      : "rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600"
+                  }
+                >
+                  {item.label}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => setFilterPanelOpen((v) => !v)}
+                aria-expanded={filterPanelOpen}
+                className="ml-auto inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50"
               >
-                <label className="block">
-                  <span className="mb-1 text-xs font-semibold text-slate-600">검색</span>
-                  <input
-                    value={search}
-                    onChange={(event) => setSearch(event.target.value)}
-                    placeholder="고객명, 전화번호, 주소, 증상"
-                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
-                  />
-                </label>
-                <label className="block">
-  <span className="mb-1 text-xs font-semibold text-slate-600">희망일 조회</span>
-  <input
-    type="date"
-    value={selectedDate}
-    onChange={(event) => setSelectedDate(event.target.value)}
-    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
-  />
-</label>
-                <label className="block">
-                  <span className="mb-1 text-xs font-semibold text-slate-600">지역 검색</span>
-                  <input
-                    value={region}
-                    onChange={(event) => setRegion(event.target.value)}
-                    placeholder="구/동 입력"
-                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
-                  />
-                </label>
-                {showTechnicianFilter && (
-                  <label className="block">
-                    <span className="mb-1 text-xs font-semibold text-slate-600">기사</span>
-                    <select
-                      value={technicianFilter}
-                      onChange={(event) => setTechnicianFilter(event.target.value)}
-                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
-                    >
-                      <option value="all">전체 기사</option>
-                      <option value="unassigned">미배정</option>
-                      {technicianOptions.map((tech) => (
-                        <option key={tech.id} value={tech.id}>
-                          {tech.name}
-                        </option>
+                필터 설정
+                <ChevronDown
+                  size={14}
+                  className={`transition-transform ${filterPanelOpen ? "rotate-180" : ""}`}
+                />
+              </button>
+            </div>
+
+            {/* grid-rows trick으로 height transition. 접힘 시 0fr → 펼침 시 1fr */}
+            <div
+              className={`grid overflow-hidden transition-[grid-template-rows] duration-200 ${
+                filterPanelOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
+              }`}
+            >
+              <div className="min-h-0 overflow-hidden">
+                <div className="space-y-3 pt-1">
+                  <div
+                    className={
+                      showTechnicianFilter
+                        ? "grid gap-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5"
+                        : "grid gap-2 sm:grid-cols-2 md:grid-cols-4"
+                    }
+                  >
+                    <label className="block">
+                      <span className="mb-1 text-xs font-semibold text-slate-600">검색</span>
+                      <input
+                        value={search}
+                        onChange={(event) => setSearch(event.target.value)}
+                        placeholder="고객명, 전화, 주소, 증상"
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="mb-1 text-xs font-semibold text-slate-600">희망일 조회</span>
+                      <input
+                        type="date"
+                        value={selectedDate}
+                        onChange={(event) => setSelectedDate(event.target.value)}
+                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="mb-1 text-xs font-semibold text-slate-600">지역 검색</span>
+                      <input
+                        value={region}
+                        onChange={(event) => setRegion(event.target.value)}
+                        placeholder="구/동 입력"
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
+                      />
+                    </label>
+                    {showTechnicianFilter && (
+                      <label className="block">
+                        <span className="mb-1 text-xs font-semibold text-slate-600">기사</span>
+                        <select
+                          value={technicianFilter}
+                          onChange={(event) => setTechnicianFilter(event.target.value)}
+                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
+                        >
+                          <option value="all">전체 기사</option>
+                          <option value="unassigned">미배정</option>
+                          {technicianOptions.map((tech) => (
+                            <option key={tech.id} value={tech.id}>
+                              {tech.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    )}
+                    <label className="block">
+                      <span className="mb-1 text-xs font-semibold text-slate-600">정렬</span>
+                      <select
+                        value={sortBy}
+                        onChange={(event) => setSortBy(event.target.value as SortKey)}
+                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
+                      >
+                        {sortOptions.map((option) => (
+                          <option key={option.key} value={option.key} disabled={filterMine && option.key === "distance" && !location}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-xs font-semibold text-slate-600">반경 필터 (현재 위치 기반)</p>
+                      {location ? (
+                        <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">허용됨</span>
+                      ) : (
+                        <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">권한 필요</span>
+                      )}
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {RADIUS_OPTIONS.map((option) => (
+                        <button
+                          key={option.value}
+                          type="button"
+                          onClick={() => setRadius(option.value)}
+                          disabled={!location && option.value !== "all"}
+                          className={
+                            radius === option.value
+                              ? "rounded-full bg-brand-600 px-3 py-1 text-xs font-semibold text-white"
+                              : "rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600 disabled:cursor-not-allowed disabled:opacity-50"
+                          }
+                        >
+                          {option.label}
+                        </button>
                       ))}
-                    </select>
-                  </label>
-                )}
-                <label className="block">
-                  <span className="mb-1 text-xs font-semibold text-slate-600">정렬</span>
-                  <select
-                    value={sortBy}
-                    onChange={(event) => setSortBy(event.target.value as SortKey)}
-                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
-                  >
-                    {sortOptions.map((option) => (
-                      <option key={option.key} value={option.key} disabled={filterMine && option.key === "distance" && !location}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-            </div>
-
-            <div className="space-y-3">
-              <div className="flex items-center justify-between gap-2">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">반경 필터</p>
-                  <p className="text-sm text-slate-600">현재 위치 기반 필터</p>
+                    </div>
+                    {locationError && (
+                      <p className="mt-2 text-xs text-rose-600">{locationError}</p>
+                    )}
+                  </div>
                 </div>
-                {location ? (
-                  <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">허용됨</span>
-                ) : (
-                  <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-700">권한 필요</span>
-                )}
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {RADIUS_OPTIONS.map((option) => (
-                  <button
-                    key={option.value}
-                    type="button"
-                    onClick={() => setRadius(option.value)}
-                    disabled={!location && option.value !== "all"}
-                    className={
-                      radius === option.value
-                        ? "rounded-full bg-brand-600 px-3 py-1 text-xs font-semibold text-white"
-                        : "rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600 disabled:cursor-not-allowed disabled:opacity-50"
-                    }
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
-              {locationError ? (
-                <p className="text-xs text-rose-600">{locationError}</p>
-              ) : (
-                <p className="text-xs text-slate-500">반경 필터는 위치 정보가 허용된 경우에만 적용됩니다.</p>
-              )}
-            </div>
-
-            <div className="space-y-3">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">알림</p>
-                <p className="mt-2 text-sm text-slate-600">새 콜 및 미선점 재알림 설정</p>
-              </div>
-              <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
-                <div className="flex items-center justify-between gap-3">
-                  <span>브라우저 알림</span>
-                  <button
-                    type="button"
-                    onClick={() => setNotificationEnabled((prev) => !prev)}
-                    className={
-                      notificationEnabled
-                        ? "rounded-full bg-brand-600 px-3 py-1 text-xs font-semibold text-white"
-                        : "rounded-full border border-slate-300 bg-white px-3 py-1 text-xs text-slate-600"
-                    }
-                  >
-                    {notificationEnabled ? "ON" : "OFF"}
-                  </button>
-                </div>
-                <div className="mt-3 flex items-center justify-between gap-3">
-                  <span>알림음</span>
-                  <button
-                    type="button"
-                    onClick={() => setSoundEnabled((prev) => !prev)}
-                    className={
-                      soundEnabled
-                        ? "rounded-full bg-brand-600 px-3 py-1 text-xs font-semibold text-white"
-                        : "rounded-full border border-slate-300 bg-white px-3 py-1 text-xs text-slate-600"
-                    }
-                  >
-                    {soundEnabled ? "ON" : "OFF"}
-                  </button>
-                </div>
-                {notificationEnabled && notificationPermission === "denied" && (
-                  <p className="mt-3 text-xs text-rose-600">알림 권한이 차단되었습니다. 브라우저 설정에서 허용해주세요.</p>
-                )}
-              </div>
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">통계</p>
-                <p className="mt-2 text-sm text-slate-600">총 {visible.length}건 표시 중</p>
-              </div>
-              <div className="rounded-3xl bg-slate-50 p-3 text-sm text-slate-700">
-                {filterMine ? (
-                  <p>내 콜 전용 보기</p>
-                ) : (
-                  <p>대기/내 콜/완료/취소 중심 보기</p>
-                )}
               </div>
             </div>
           </div>
@@ -780,21 +788,23 @@ export function CallList({
             return (
               <details
   key={call.id}
-  className={`group overflow-hidden rounded-2xl border shadow-sm transition active:scale-[0.995] lg:rounded-[28px] ${
+  // 완료콜은 faded 회색 톤 (시각적으로 "끝남" 표시).
+  // 신규콜은 white + emerald 강조. 그 외 white.
+  className={`group overflow-hidden rounded-xl border shadow-sm transition active:scale-[0.995] sm:rounded-2xl lg:rounded-[28px] ${
     call.status === "completed"
-      ? "border-emerald-200 bg-emerald-50"
+      ? "border-slate-200 bg-slate-100/70 text-slate-500 opacity-80"
       : call.status === "new"
-        ? "border-emerald-200 bg-white shadow-emerald-50"
+        ? "border-emerald-300 bg-white shadow-emerald-50"
         : "border-slate-200 bg-white"
   }`}
 >
-                <summary className="grid gap-x-3 gap-y-1 px-3 py-2 text-[13px] text-slate-700 transition grid-cols-2 sm:grid-cols-[1.7fr_1.3fr_1fr_1fr_0.8fr_0.9fr] sm:items-center sm:gap-2 sm:py-2.5 lg:py-1.5">
+                <summary className="grid grid-cols-2 gap-x-2 gap-y-0.5 px-2.5 py-1.5 text-[12px] text-slate-700 transition sm:grid-cols-[1.7fr_1.3fr_1fr_1fr_0.8fr_0.9fr] sm:items-center sm:gap-2 sm:px-3 sm:py-2.5 sm:text-[13px] lg:py-1.5">
                   <div className="col-span-2 min-w-0 sm:col-span-1">
                     <p className="flex items-baseline gap-1.5">
-                      <span className="truncate text-sm font-bold text-slate-900">
+                      <span className="truncate text-[13px] font-bold text-slate-900 sm:text-sm">
                         {call.district ?? "지역 미정"}
                       </span>
-                      <span className="truncate text-xs text-slate-500 sm:hidden">
+                      <span className="truncate text-[11px] text-slate-500 sm:hidden">
                         {call.address}
                       </span>
                     </p>
@@ -802,14 +812,14 @@ export function CallList({
                       {call.address}
                     </p>
                     {distance != null && (
-                      <p className="mt-0.5 text-xs text-slate-400">{distance.toFixed(1)}km</p>
+                      <p className="mt-0.5 text-[11px] text-slate-400 sm:text-xs">{distance.toFixed(1)}km</p>
                     )}
                   </div>
-                  <div className="col-span-2 min-w-0 text-xs text-slate-600 sm:col-span-1 sm:text-[13px]">
+                  <div className="col-span-2 min-w-0 text-[11px] text-slate-600 sm:col-span-1 sm:text-[13px]">
                     <p className="truncate">{call.symptom ?? "증상 없음"}</p>
                   </div>
-                  <div className="text-xs sm:text-[13px]">{formatPreferredTime(call.preferred_time)}</div>
-                  <div className="text-xs font-medium sm:text-[13px]">{call.estimated_amount != null ? formatKRW(call.estimated_amount) : "-"}</div>
+                  <div className="text-[11px] sm:text-[13px]">{formatPreferredTime(call.preferred_time)}</div>
+                  <div className="text-[11px] font-medium sm:text-[13px]">{call.estimated_amount != null ? formatKRW(call.estimated_amount) : "-"}</div>
                <div>
   <div className="flex flex-wrap items-center gap-1">
     <StatusBadge status={call.status} />
@@ -820,7 +830,7 @@ export function CallList({
     )}
   </div>
 
-{currentUserRole === "admin" &&
+{(currentUserRole === "admin" || currentUserRole === "dispatcher") &&
   call.paid_amount != null &&
   call.customer_amount != null &&
   Number(call.paid_amount) > 0 &&
@@ -831,7 +841,7 @@ export function CallList({
     </div>
 )}
 
-{currentUserRole === "admin" &&
+{(currentUserRole === "admin" || currentUserRole === "dispatcher") &&
   call.status === "completed" &&
   !call.happy_call_checked && (
     <div className="mt-1 rounded-lg bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-700">
@@ -841,17 +851,26 @@ export function CallList({
 </div>
                   <div className="flex flex-col items-end gap-2">
                     {currentUserRole === "technician" && call.status === "new" && !call.assigned_to ? (
-                      <button
-                        type="button"
-                        onClick={(event) => {
-                          event.preventDefault();
-                          claimCall(call.id);
-                        }}
-                        disabled={claimingCallId === call.id}
-                        className="rounded-xl bg-brand-600 px-3 py-2 text-xs font-semibold text-white transition disabled:opacity-60 hover:bg-brand-700"
-                      >
-                        {claimingCallId === call.id ? "잡는 중..." : "잡기"}
-                      </button>
+                      // technician + 미배정 신규콜: 잡기 + 상세 둘 다 (상세 페이지 진입 없이 바로 선점 가능)
+                      <div className="flex flex-wrap justify-end gap-1.5">
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.preventDefault();
+                            claimCall(call.id);
+                          }}
+                          disabled={claimingCallId === call.id}
+                          className="rounded-xl bg-brand-600 px-3 py-2 text-xs font-semibold text-white transition disabled:opacity-60 hover:bg-brand-700"
+                        >
+                          {claimingCallId === call.id ? "잡는 중..." : "잡기"}
+                        </button>
+                        <Link
+                          href={`/calls/${call.id}`}
+                          className="inline-flex rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100"
+                        >
+                          상세
+                        </Link>
+                      </div>
                     ) : isMine && call.status === "assigned" ? (
                       <Link
                         href={`/calls/${call.id}`}
