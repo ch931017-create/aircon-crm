@@ -10,10 +10,10 @@ import { createClient } from "@/lib/supabase/server";
 //
 // 허용 target status (의도된 제한):
 //   - "new"       (대기)
-//   - "assigned"  (진행/잡음)
+//   - "assigned"  (배정됨)
 //   - "cancelled" (취소)
 //
-// "completed" 일괄변경을 의도적으로 제외하는 이유:
+// "completed" 를 target으로 일괄변경 금지 — 의도된 설계:
 //   - 단건 /api/calls/status 의 completed 처리는 다음 부수 효과 발생:
 //       1) completed_at 자동 설정
 //       2) admin/dispatcher 에게 push 발송 (notify_completion=true)
@@ -22,14 +22,19 @@ import { createClient } from "@/lib/supabase/server";
 //   - bulk 로 N건을 완료시키면 push 폭주 + 해피콜 중복 발송 + 정산 누락 위험.
 //   - 따라서 완료 처리는 항상 단건 흐름을 유지하고 bulk 에서는 차단.
 //
+// source(현재 상태)가 "completed" 인 경우 → 허용 (운영 정책 변경):
+//   - 완료를 잘못 처리한 콜을 admin 이 일괄로 되돌릴 수 있어야 함.
+//   - 이 경우 completed_at 도 null 로 함께 초기화 (UI/DB 불일치 방지).
+//   - 기존 happy_call_log / push 발송 이력은 보존 (이미 발송된 알림은 되돌릴 수 없음).
+//
 // 처리 정책 (각 ID 별):
 //   - deleted_at 있음 → skip (ALREADY_DELETED)
-//   - 현재 status === "completed" → skip (COMPLETED_PROTECTED, un-complete 방지)
 //   - 현재 status === target → skip (NO_CHANGE)
-//   - 그 외 → status 만 update (다른 필드 미터치)
-//     · completed_at: source 가 completed 가 아니므로 어차피 null. 손대지 않음.
+//   - 그 외 → status update + completed_at = null
+//     · completed_at: target 이 항상 non-completed 이므로 일관되게 null 로 설정.
+//                     source 가 completed 였다면 자동으로 완료 시각도 해제됨.
 //     · assigned_to:  hybrid 상태(status≠assigned 이지만 assigned_to 남음) 가능.
-//                     이는 admin 의도로 보고 손대지 않음. release 가 필요하면
+//                     admin 의도로 보고 손대지 않음. release 가 필요하면
 //                     기존 /api/calls/release API 사용.
 //
 // 최대 MAX_BULK 건 cap.
@@ -106,18 +111,16 @@ export async function POST(request: NextRequest) {
       skipped.push({ id, reason: "ALREADY_DELETED" });
       continue;
     }
-    if (call.status === "completed") {
-      skipped.push({ id, reason: "COMPLETED_PROTECTED" });
-      continue;
-    }
     if (call.status === target) {
       skipped.push({ id, reason: "NO_CHANGE" });
       continue;
     }
 
+    // target은 항상 non-completed 이므로 completed_at 도 null 로 통일.
+    // source가 completed 였다면 자동으로 완료 시각이 해제되어 데이터 정합성 유지.
     const { error: updateError } = await supabase
       .from("calls")
-      .update({ status: target })
+      .update({ status: target, completed_at: null })
       .eq("id", id);
 
     if (updateError) {

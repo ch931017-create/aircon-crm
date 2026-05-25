@@ -546,8 +546,8 @@ export function CallList({
     if (
       !window.confirm(
         `선택한 ${count}건 콜의 상태를 "${targetLabel}"(으)로 변경하시겠습니까?\n` +
-          `완료된 콜과 이미 같은 상태인 콜은 자동 제외됩니다.\n` +
-          `삭제된 콜도 자동 제외됩니다.`,
+          `완료된 콜도 함께 변경됩니다 (완료시각은 해제됨).\n` +
+          `이미 같은 상태인 콜과 삭제된 콜은 자동 제외됩니다.`,
       )
     ) {
       return;
@@ -585,15 +585,19 @@ export function CallList({
       }
 
       // 성공한 ID만 로컬 state 즉시 반영 (target status로 갱신).
-      // 중요: data.details.skipped (completed/deleted/no_change 콜) 는 의도적으로 제외.
-      //   - completed 콜은 DB에서 protected 라 상태가 안 바뀜.
+      // 중요: data.details.skipped (deleted/no_change 콜) 는 의도적으로 제외.
+      //   - skipped 콜은 DB에서 상태가 안 바뀐 콜.
       //   - 만약 successIds가 아닌 모든 선택 ID를 업데이트하면 UI/DB mismatch 발생.
       //   - 따라서 successIds에만 status 적용 → router.refresh()로 보강 동기화.
+      // completed_at 도 함께 null 로 (API와 동일하게 — target 이 항상 non-completed
+      // 이므로 source가 completed 였더라도 완료 시각을 해제해 UI 일관성 보장).
       const successIds = new Set(data.details?.success ?? []);
       if (successIds.size > 0) {
         setCalls((prev) =>
           prev.map((c) =>
-            successIds.has(c.id) ? { ...c, status: bulkStatusTarget } : c,
+            successIds.has(c.id)
+              ? { ...c, status: bulkStatusTarget, completed_at: null }
+              : c,
           ),
         );
       }
@@ -1127,7 +1131,7 @@ export function CallList({
                       !checkable
                         ? "삭제된 콜은 선택 불가"
                         : call.status === "completed"
-                          ? "완료콜 (bulk 삭제/상태변경은 자동 제외됨)"
+                          ? "완료콜 (삭제는 제외되지만 상태변경은 가능합니다)"
                           : "선택"
                     }
                     aria-label="콜 선택"
