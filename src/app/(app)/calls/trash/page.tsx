@@ -6,8 +6,9 @@ import type { CallRow, ProfileRow } from "@/types/database";
 export const dynamic = "force-dynamic";
 
 export default async function TrashPage() {
-  // admin / dispatcher만 접근. technician은 자동으로 /로 리다이렉트
-  await requireRole("admin", "dispatcher");
+  // admin / dispatcher만 접근. technician은 자동으로 /로 리다이렉트.
+  // 영구삭제는 admin 전용이라 client에 role 전달.
+  const me = await requireRole("admin", "dispatcher");
 
   const supabase = createClient();
 
@@ -27,5 +28,11 @@ export default async function TrashPage() {
     Pick<ProfileRow, "id" | "name" | "role">
   >;
 
-  return <TrashClient calls={calls} profiles={profiles} />;
+  return (
+    <TrashClient
+      calls={calls}
+      profiles={profiles}
+      isAdmin={me.profile.role === "admin"}
+    />
+  );
 }
