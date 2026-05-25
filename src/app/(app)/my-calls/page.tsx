@@ -2,7 +2,8 @@ import { requireRole } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { CallList } from "@/components/calls/CallList";
 import { timed } from "@/lib/timing";
-import type { CallRow, ProfileRow } from "@/types/database";
+import { getProfilesList } from "@/lib/profiles-cache";
+import type { CallRow } from "@/types/database";
 
 export const dynamic = "force-dynamic";
 
@@ -12,7 +13,8 @@ export default async function MyCallsPage() {
   const supabase = createClient();
 
   // CallList가 실제 사용하는 18개 컬럼만 select (payload 절반 축소)
-  const [{ data: callsData }, { data: profilesData }] = await Promise.all([
+  // profiles는 unstable_cache(60s, tag:"profiles")로 nav당 DB 왕복 제거
+  const [{ data: callsData }, profiles] = await Promise.all([
     timed(
       "/my-calls fetch.calls",
       supabase
@@ -30,15 +32,11 @@ export default async function MyCallsPage() {
         .order("created_at", { ascending: false })
         .limit(400),
     ),
-    timed(
-      "/my-calls fetch.profiles",
-      supabase.from("profiles").select("id, name, role"),
-    ),
+    timed("/my-calls fetch.profiles", getProfilesList()),
   ]);
   console.log(`[timing] /my-calls TOTAL: ${Date.now() - tPageStart}ms`);
 
   const calls = (callsData ?? []) as unknown as CallRow[];
-  const profiles = (profilesData ?? []) as Array<Pick<ProfileRow, "id" | "name" | "role">>;
 
   return (
     <section className="space-y-4">

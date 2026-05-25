@@ -5,7 +5,8 @@ import { createClient } from "@/lib/supabase/server";
 import { CallList } from "@/components/calls/CallList";
 import { CallForm } from "@/components/calls/CallForm";
 import { timed } from "@/lib/timing";
-import type { CallRow, ProfileRow } from "@/types/database";
+import { getProfilesList } from "@/lib/profiles-cache";
+import type { CallRow } from "@/types/database";
 
 export const dynamic = "force-dynamic";
 
@@ -16,7 +17,8 @@ export default async function CallsPage() {
 
   // CallList가 실제 사용하는 18개 컬럼만 select (payload 절반 축소)
   // realtime은 INSERT/UPDATE/DELETE 이벤트로 전체 row를 받지만, 그건 별개 (extra fields 무해)
-  const [{ data: callsData }, { data: profilesData }] = await Promise.all([
+  // profiles는 unstable_cache(60s, tag:"profiles")로 nav당 DB 왕복 제거
+  const [{ data: callsData }, profiles] = await Promise.all([
     timed(
       "/calls fetch.calls",
       supabase
@@ -33,19 +35,13 @@ export default async function CallsPage() {
         .order("created_at", { ascending: false })
         .limit(400),
     ),
-    timed(
-      "/calls fetch.profiles",
-      supabase.from("profiles").select("id, name, role"),
-    ),
+    timed("/calls fetch.profiles", getProfilesList()),
   ]);
   console.log(`[timing] /calls TOTAL: ${Date.now() - tPageStart}ms`);
 
   // unknown cast: select 부분 컬럼 string은 supabase-js의 generic narrowing이 안 됨.
   // 운영 컬럼 정합성은 select string으로 보장, 타입은 CallRow로 사용 (인덱스 시그니처로 누락 필드 안전).
   const calls = (callsData ?? []) as unknown as CallRow[];
-  const profiles = (profilesData ?? []) as Array<
-    Pick<ProfileRow, "id" | "name" | "role">
-  >;
 
   const canCreate =
     user.profile.role === "dispatcher" || user.profile.role === "admin";
