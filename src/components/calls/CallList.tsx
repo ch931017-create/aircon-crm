@@ -64,28 +64,8 @@ function formatPreferredTime(value?: string | null) {
 }
 
 const PAGE_SIZE = 50;
-const REMINDER_MINUTES = 5;
-
-function playNotificationSound() {
-  if (typeof window === "undefined") return;
-  try {
-    const audioCtx = new window.AudioContext();
-    const oscillator = audioCtx.createOscillator();
-    oscillator.type = "sine";
-    oscillator.frequency.value = 440;
-    oscillator.connect(audioCtx.destination);
-    oscillator.start();
-    oscillator.stop(audioCtx.currentTime + 0.12);
-  } catch {
-    // ignore audio issues
-  }
-}
-
-function showBrowserNotification(title: string, body: string) {
-  if (typeof window === "undefined" || typeof Notification === "undefined") return;
-  if (Notification.permission !== "granted") return;
-  new Notification(title, { body });
-}
+// (제거됨) 5분 미배정 reminder — 운영 정책 변경. 신규 콜은 Web Push 로만 알림.
+// 앱 내부 sound / browser Notification 도 함께 제거 (불필요한 중복).
 
 interface Props {
   currentUserId: string;
@@ -147,21 +127,10 @@ export function CallList({
   // 같은 탭/세션 동안만 펼침 상태 유지 (페이지 이동 후 돌아와도 유지).
   // sessionStorage 사용 → 브라우저/PWA 재시작 시 다시 default(접힘).
   const [filterPanelOpen, setFilterPanelOpen] = useState<boolean>(false);
-  const [notificationEnabled, setNotificationEnabled] = useState(false);
-  const [soundEnabled, setSoundEnabled] = useState(true);
-  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>("default");
   const [page, setPage] = useState(1);
 
+  // 신규 콜 INSERT toast 중복 방지용 (sound/Notification 제거 후에도 toast 는 유지).
   const notifiedCallIds = useRef<Set<string>>(new Set());
-  const reminderCallIds = useRef<Set<string>>(new Set());
-
-  // 알림 토글 latest value 를 realtime handler 안에서 안전하게 읽기 위한 refs.
-  // 이전엔 channel useEffect deps 에 notificationEnabled/notificationPermission/
-  // soundEnabled 가 있어서 토글마다 channel re-subscribe 발생 → 작은 성능 손실.
-  // refs 로 우회 + deps [] → 마운트 시 1회만 구독.
-  const notificationEnabledRef = useRef(false);
-  const notificationPermissionRef = useRef<NotificationPermission>("default");
-  const soundEnabledRef = useRef(true);
 
   const profileMap = useMemo(() => {
     const map = new Map<string, { name: string; role: ProfileRow["role"] }>();
@@ -175,42 +144,7 @@ export function CallList({
     if (sortBy === "distance" && (!filterMine || !location)) {
       setSortBy("latest");
     }
-    if (typeof window === "undefined") return;
-    const storedNotification = window.localStorage.getItem("callNotificationEnabled");
-    const storedSound = window.localStorage.getItem("callNotificationSoundEnabled");
-    if (storedNotification !== null) setNotificationEnabled(storedNotification === "true");
-    if (storedSound !== null) setSoundEnabled(storedSound === "true");
-    if (typeof Notification !== "undefined") {
-      setNotificationPermission(Notification.permission);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem("callNotificationEnabled", notificationEnabled ? "true" : "false");
-  }, [notificationEnabled]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem("callNotificationSoundEnabled", soundEnabled ? "true" : "false");
-  }, [soundEnabled]);
-
-  // /settings 페이지(다른 탭 또는 같은 탭 SPA 이동)에서 변경된 알림 설정을
-  // 실시간 반영. 같은 탭은 컴포넌트 재마운트 시 위 useEffect로 읽지만,
-  // 다른 탭 동시 사용 케이스 대비 storage 이벤트로 동기화.
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const handler = (e: StorageEvent) => {
-      if (e.key === "callNotificationEnabled" && e.newValue !== null) {
-        setNotificationEnabled(e.newValue === "true");
-      }
-      if (e.key === "callNotificationSoundEnabled" && e.newValue !== null) {
-        setSoundEnabled(e.newValue === "true");
-      }
-    };
-    window.addEventListener("storage", handler);
-    return () => window.removeEventListener("storage", handler);
-  }, []);
+  }, [sortBy, filterMine, location]);
 
   // 필터 패널 펼침 상태 sessionStorage 동기화 (탭/세션 단위 유지).
   // 마운트 시 1회 읽기: 사용자가 페이지 이동 후 돌아오면 이전 상태 복원.
@@ -229,28 +163,6 @@ export function CallList({
       filterPanelOpen ? "true" : "false",
     );
   }, [filterPanelOpen]);
-
-  useEffect(() => {
-    if (typeof window === "undefined" || !notificationEnabled || typeof Notification === "undefined") return;
-    if (Notification.permission === "default") {
-      Notification.requestPermission().then((permission) => {
-        setNotificationPermission(permission);
-      });
-    } else {
-      setNotificationPermission(Notification.permission);
-    }
-  }, [notificationEnabled]);
-
-  // 알림 토글 latest value 를 ref 로 동기화 (channel handler 가 stale closure 회피).
-  useEffect(() => {
-    notificationEnabledRef.current = notificationEnabled;
-  }, [notificationEnabled]);
-  useEffect(() => {
-    notificationPermissionRef.current = notificationPermission;
-  }, [notificationPermission]);
-  useEffect(() => {
-    soundEnabledRef.current = soundEnabled;
-  }, [soundEnabled]);
 
   // realtime channel — 마운트 시 1회만 구독 (deps []).
   // notification 토글로 인한 재구독 churn 제거 → 모바일 체감 성능 개선.
@@ -275,15 +187,9 @@ export function CallList({
 
           if (row.status === "new" && !notifiedCallIds.current.has(row.id)) {
             notifiedCallIds.current.add(row.id);
+            // 시각 toast 만 유지. 앱 내부 sound / 브라우저 Notification 은 운영 정책상 제거.
+            // 신규 콜 OS 알림은 Web Push 로 처리됨 (서버 측 createCallAction).
             toast.success(`새 콜 등록: ${row.district ?? "지역 미정"} ${row.address}`);
-            // ref 로 최신값 접근 → 토글로 channel re-subscribe 불필요.
-            if (soundEnabledRef.current) playNotificationSound();
-            if (
-              notificationEnabledRef.current &&
-              notificationPermissionRef.current === "granted"
-            ) {
-              showBrowserNotification("새 콜 알림", `${row.customer_name} ${row.phone} ${row.district ?? ""}`);
-            }
           }
         },
       )
@@ -325,33 +231,10 @@ export function CallList({
   //   - 위치는 "내 위치 갱신" 버튼(handleUpdateLocation) 으로만 수동 요청.
   //   - 위치 없어도 콜 목록/내콜 렌더링은 정상. 거리순 정렬은 disabled 됨.
 
-  useEffect(() => {
-    const checkReminders = () => {
-      const threshold = Date.now() - REMINDER_MINUTES * 60 * 1000;
-      calls.forEach((call) => {
-        if (call.status !== "new") return;
-        if (reminderCallIds.current.has(call.id)) return;
-        const createdAt = new Date(call.created_at).getTime();
-        if (createdAt > threshold) return;
-
-        reminderCallIds.current.add(call.id);
-        toast(`재알림: ${call.district ?? "지역 미정"} ${call.address} 콜이 ${REMINDER_MINUTES}분 동안 미선점 상태입니다.`, {
-          action: {
-            label: "상세 보기",
-            onClick: () => void router.push(`/calls/${call.id}`),
-          },
-        });
-        if (soundEnabled) playNotificationSound();
-        if (notificationEnabled && notificationPermission === "granted") {
-          showBrowserNotification("콜 재알림", `${call.address} 콜이 ${REMINDER_MINUTES}분 동안 미선점 상태입니다.`);
-        }
-      });
-    };
-
-    checkReminders();
-    const interval = window.setInterval(checkReminders, 60000);
-    return () => window.clearInterval(interval);
-  }, [calls, notificationEnabled, notificationPermission, router, soundEnabled]);
+  // (제거됨) 5분 미배정 콜 재알림 useEffect — 운영 정책 변경.
+  //   - 신규 콜은 Web Push 로 기사 폰에 도착 (서버 발송).
+  //   - 앱 내부 setInterval/toast/sound/Notification 중복 알림은 부담스럽고 모바일
+  //     성능에도 부정적이라 통째 제거.
 
   useEffect(() => {
     setPage(1);
@@ -380,8 +263,22 @@ export function CallList({
         setActionError(data.error ?? "콜 잡기에 실패했습니다.");
         return;
       }
-      router.refresh();
-    } catch (err) {
+      // Optimistic: 즉시 본인 화면에 반영. router.refresh() 의존 제거 (모바일 체감 개선).
+      // realtime UPDATE 가 다른 사용자 화면도 갱신함.
+      const nowIso = new Date().toISOString();
+      setCalls((prev) =>
+        prev.map((c) =>
+          c.id === callId
+            ? {
+                ...c,
+                status: "assigned",
+                assigned_to: currentUserId,
+                assigned_at: nowIso,
+              }
+            : c,
+        ),
+      );
+    } catch {
       setActionError("콜 잡기에 실패했습니다.");
     } finally {
       setClaimingCallId(null);
@@ -402,7 +299,14 @@ export function CallList({
         setActionError(data.error ?? "반납에 실패했습니다.");
         return;
       }
-      router.refresh();
+      // Optimistic: 반납 즉시 status='new', assigned_to=null 로 화면 반영.
+      setCalls((prev) =>
+        prev.map((c) =>
+          c.id === callId
+            ? { ...c, status: "new", assigned_to: null, assigned_at: null }
+            : c,
+        ),
+      );
     } catch {
       setActionError("반납에 실패했습니다.");
     } finally {
@@ -718,7 +622,16 @@ export function CallList({
         setActionError(data.error ?? "취소에 실패했습니다.");
         return;
       }
-      router.refresh();
+      // Optimistic: status='cancelled' 즉시 반영. visible filter 가 cancelled 필터
+      // 따라 화면에서 자연스럽게 제거됨 (HIDDEN_STATUSES 별개라 cancelled 는 노출).
+      // completed_at 은 cancelled 의 경우 null 처리 (status API 와 일관).
+      setCalls((prev) =>
+        prev.map((c) =>
+          c.id === callId
+            ? { ...c, status: "cancelled", completed_at: null }
+            : c,
+        ),
+      );
     } catch {
       setActionError("취소에 실패했습니다.");
     } finally {

@@ -41,10 +41,7 @@ export function SettingsClient({ role, notifyCompletion }: Props) {
   const [busy, setBusy] = useState(false);
   const [completionEnabled, setCompletionEnabled] = useState(notifyCompletion);
 
-  // 새 콜 알림(앱 열림 상태에서의 native Notification + sound).
-  // CallList와 localStorage로 공유. 기본값: 알림 OFF, 알림음 ON.
-  const [callNotifEnabled, setCallNotifEnabled] = useState<boolean>(false);
-  const [callSoundEnabled, setCallSoundEnabled] = useState<boolean>(true);
+  // (제거됨) callNotifEnabled / callSoundEnabled — 운영 정책 변경. 앱 내부 알림 통째 제거.
 
   // 동기화 상태 진단:
   //   - localSubEndpoint   : 브라우저 PushSubscription.endpoint
@@ -100,12 +97,6 @@ export function SettingsClient({ role, notifyCompletion }: Props) {
   useEffect(() => {
     setPermission(getPushPermissionState());
     setSupported(isPushSupported());
-    if (typeof window !== "undefined") {
-      const n = window.localStorage.getItem("callNotificationEnabled");
-      if (n !== null) setCallNotifEnabled(n === "true");
-      const s = window.localStorage.getItem("callNotificationSoundEnabled");
-      if (s !== null) setCallSoundEnabled(s === "true");
-    }
     void refetchPushStatus();
   }, []);
 
@@ -127,33 +118,7 @@ export function SettingsClient({ role, notifyCompletion }: Props) {
     !currentDeviceServerExists &&
     !statusLoading;
 
-  function toggleCallNotif(next: boolean) {
-    setCallNotifEnabled(next);
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(
-        "callNotificationEnabled",
-        next ? "true" : "false",
-      );
-    }
-    // ON으로 켤 때 브라우저 권한이 default면 요청 (사용자 클릭 컨텍스트 안)
-    if (
-      next &&
-      typeof Notification !== "undefined" &&
-      Notification.permission === "default"
-    ) {
-      Notification.requestPermission().then((p) => setPermission(p));
-    }
-  }
-
-  function toggleCallSound(next: boolean) {
-    setCallSoundEnabled(next);
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(
-        "callNotificationSoundEnabled",
-        next ? "true" : "false",
-      );
-    }
-  }
+  // (제거됨) toggleCallNotif / toggleCallSound — 운영 정책 변경.
 
   // mismatch 일 때도 동일 함수 호출. subscribeUserToPush 는 로컬 sub 가 있으면
   // step3/4 (permission/subscribe) 스킵하고 step5 (서버 upsert) 만 실행 →
@@ -375,55 +340,9 @@ export function SettingsClient({ role, notifyCompletion }: Props) {
         )}
       </div>
 
-      {/* 신규: 앱 열림 시 새 콜 알림 (CallList realtime과 연동, localStorage) */}
-      <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div>
-          <h2 className="text-base font-semibold text-slate-900">
-            새 콜 알림 (앱 열림 시)
-          </h2>
-          <p className="mt-1 text-xs text-slate-500">
-            전체콜 화면이 열려있을 때 새 콜 등록·미선점 재알림을 받습니다.
-            브라우저 native 알림과 알림음을 따로 끌 수 있습니다.
-          </p>
-        </div>
-
-        <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
-          <div className="flex items-center justify-between gap-3">
-            <span>브라우저 알림</span>
-            <button
-              type="button"
-              onClick={() => toggleCallNotif(!callNotifEnabled)}
-              className={
-                callNotifEnabled
-                  ? "rounded-full bg-brand-600 px-4 py-1 text-xs font-semibold text-white"
-                  : "rounded-full border border-slate-300 bg-white px-4 py-1 text-xs text-slate-600"
-              }
-            >
-              {callNotifEnabled ? "ON" : "OFF"}
-            </button>
-          </div>
-          <div className="mt-3 flex items-center justify-between gap-3">
-            <span>알림음</span>
-            <button
-              type="button"
-              onClick={() => toggleCallSound(!callSoundEnabled)}
-              className={
-                callSoundEnabled
-                  ? "rounded-full bg-brand-600 px-4 py-1 text-xs font-semibold text-white"
-                  : "rounded-full border border-slate-300 bg-white px-4 py-1 text-xs text-slate-600"
-              }
-            >
-              {callSoundEnabled ? "ON" : "OFF"}
-            </button>
-          </div>
-          {callNotifEnabled && permission === "denied" && (
-            <p className="mt-3 text-xs text-rose-600">
-              브라우저 알림 권한이 차단되어 있어 native 알림이 표시되지 않습니다.
-              위 &quot;브라우저 푸시 알림&quot; 안내대로 권한을 허용해주세요.
-            </p>
-          )}
-        </div>
-      </div>
+      {/* (제거됨) "새 콜 알림 (앱 열림 시)" 섹션 — 운영 정책 변경:
+            앱 내부 sound / browser Notification / 5분 미배정 재알림 모두 제거됨.
+            신규 콜 알림은 Web Push 1 채널로 단일화. (CallList INSERT toast 는 시각 컨펌으로만 유지) */}
 
       {(role === "admin" || role === "dispatcher") && (
         <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
