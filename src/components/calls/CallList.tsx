@@ -108,8 +108,14 @@ export function CallList({
   const [calls, setCalls] = useState<CallRow[]>(initialCalls);
 
   // server component(CallsPage / MyCallsPage)가 재실행되어 새 initialCalls가
-  // 들어오면 client state도 동기화. realtime이 동작하지 않거나 늦는 경우
-  // router.refresh() 후 즉시 반영되도록 보장.
+  // 들어오면 client state도 동기화.
+  // 정책 (운영 결정):
+  //   - 삭제 후 router.refresh() 의존 제거 (handleDelete / handleBulkDelete).
+  //   - 따라서 삭제 직후 stale initialCalls 가 들어와 race 일으킬 가능성 0.
+  //   - 같은 세션 삭제→복원→/calls 재진입 시 fresh initialCalls 그대로 반영 → 즉시 표시.
+  //   - 다른 page 로의 full navigation 은 Next.js 가 force-dynamic 으로 fresh fetch.
+  // 단점: /calls page header 의 calls.length(SSR) 가 다음 nav 까지 잠시 stale.
+  //       카드 UI 는 정확. 다음 nav 시 자동 갱신.
   useEffect(() => {
     setCalls(initialCalls);
   }, [initialCalls]);
@@ -148,6 +154,14 @@ export function CallList({
 
   const notifiedCallIds = useRef<Set<string>>(new Set());
   const reminderCallIds = useRef<Set<string>>(new Set());
+
+  // 알림 토글 latest value 를 realtime handler 안에서 안전하게 읽기 위한 refs.
+  // 이전엔 channel useEffect deps 에 notificationEnabled/notificationPermission/
+  // soundEnabled 가 있어서 토글마다 channel re-subscribe 발생 → 작은 성능 손실.
+  // refs 로 우회 + deps [] → 마운트 시 1회만 구독.
+  const notificationEnabledRef = useRef(false);
+  const notificationPermissionRef = useRef<NotificationPermission>("default");
+  const soundEnabledRef = useRef(true);
 
   const profileMap = useMemo(() => {
     const map = new Map<string, { name: string; role: ProfileRow["role"] }>();
@@ -227,6 +241,19 @@ export function CallList({
     }
   }, [notificationEnabled]);
 
+  // 알림 토글 latest value 를 ref 로 동기화 (channel handler 가 stale closure 회피).
+  useEffect(() => {
+    notificationEnabledRef.current = notificationEnabled;
+  }, [notificationEnabled]);
+  useEffect(() => {
+    notificationPermissionRef.current = notificationPermission;
+  }, [notificationPermission]);
+  useEffect(() => {
+    soundEnabledRef.current = soundEnabled;
+  }, [soundEnabled]);
+
+  // realtime channel — 마운트 시 1회만 구독 (deps []).
+  // notification 토글로 인한 재구독 churn 제거 → 모바일 체감 성능 개선.
   useEffect(() => {
     const supabase = createClient();
     const channel = supabase
@@ -249,8 +276,12 @@ export function CallList({
           if (row.status === "new" && !notifiedCallIds.current.has(row.id)) {
             notifiedCallIds.current.add(row.id);
             toast.success(`새 콜 등록: ${row.district ?? "지역 미정"} ${row.address}`);
-            if (soundEnabled) playNotificationSound();
-            if (notificationEnabled && notificationPermission === "granted") {
+            // ref 로 최신값 접근 → 토글로 channel re-subscribe 불필요.
+            if (soundEnabledRef.current) playNotificationSound();
+            if (
+              notificationEnabledRef.current &&
+              notificationPermissionRef.current === "granted"
+            ) {
               showBrowserNotification("새 콜 알림", `${row.customer_name} ${row.phone} ${row.district ?? ""}`);
             }
           }
@@ -284,25 +315,15 @@ export function CallList({
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [notificationEnabled, notificationPermission, soundEnabled]);
-
-  useEffect(() => {
-    if (!navigator?.geolocation) {
-      setLocationError("브라우저가 위치 정보를 지원하지 않습니다.");
-      return;
-    }
-
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        setLocation({ lat: position.coords.latitude, lng: position.coords.longitude });
-      },
-      (error) => {
-        setLocationError("위치 권한이 필요합니다. 지역 검색을 이용해주세요.");
-        console.warn("Geolocation error", error);
-      },
-      { enableHighAccuracy: true, timeout: 10000 },
-    );
+    // deps []: 마운트 시 1회만 구독. 토글 latest 는 refs 로 처리.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 자동 geolocation 요청 제거 (운영 정책):
+  //   - 카카오 인앱브라우저 / Android overlay 상태에서 mount 시 자동 요청 →
+  //     "이 사이트에서는 권한을 요청할 수 없음" 에러 반복 발생.
+  //   - 위치는 "내 위치 갱신" 버튼(handleUpdateLocation) 으로만 수동 요청.
+  //   - 위치 없어도 콜 목록/내콜 렌더링은 정상. 거리순 정렬은 disabled 됨.
 
   useEffect(() => {
     const checkReminders = () => {
@@ -424,9 +445,11 @@ export function CallList({
         throw new Error(friendly);
       }
       toast.success("콜이 휴지통으로 이동되었습니다");
-      // 로컬 상태에서 즉시 제거 (RLS 변경 후 다음 fetch에선 자동으로 안 보임)
+      // 로컬 상태에서 즉시 제거. router.refresh() 의도적 미호출:
+      //   - refresh 호출 시 SSR fetch race 로 deleted call 이 잠시 다시 보이는 회귀 발생.
+      //   - 휴지통/다른 page 카운트는 다음 nav 시 자동으로 fresh fetch (force-dynamic).
+      //   - 다른 admin/dispatcher 클라이언트는 realtime UPDATE 로 자동 반영.
       setCalls((prev) => prev.filter((c) => c.id !== callId));
-      router.refresh();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "삭제 실패");
     } finally {
@@ -501,7 +524,8 @@ export function CallList({
         throw new Error(friendly);
       }
 
-      // 성공한 ID만 로컬 state에서 즉시 제거 (스킵/실패는 그대로 표시 유지)
+      // 성공한 ID만 로컬 state에서 즉시 제거. skipped/failed 는 그대로 표시 유지.
+      // router.refresh() 의도적 미호출 (위 단건 handleDelete 와 동일 사유).
       const successIds = new Set(data.details?.success ?? []);
       if (successIds.size > 0) {
         setCalls((prev) => prev.filter((c) => !successIds.has(c.id)));
@@ -519,8 +543,8 @@ export function CallList({
       else if (k > 0) toast.message(msg);
       else toast.success(msg);
 
-      // server 데이터 재동기화 (휴지통 카운트 등 다른 page 동기화 보조)
-      router.refresh();
+      // router.refresh() 의도적 미호출 — handleDelete 와 동일 사유.
+      // 휴지통/다른 page 카운트는 다음 nav 시 자동 fresh fetch.
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "일괄 삭제 실패");
     } finally {
@@ -652,7 +676,30 @@ export function CallList({
           toast.error("위치 저장 실패");
         }
       },
-      () => toast.error("위치 권한이 필요합니다."),
+      (err) => {
+        // GeolocationPositionError code 매핑:
+        //   1 PERMISSION_DENIED, 2 POSITION_UNAVAILABLE, 3 TIMEOUT
+        // 카카오/Android overlay 등 시스템 차단도 보통 1 또는 unspecified.
+        // 자동 재시도 절대 금지 → 사용자가 다시 버튼 눌러야 새 요청 발생.
+        let msg: string;
+        switch (err?.code) {
+          case 1:
+            msg =
+              "위치 권한이 거부되었습니다. 브라우저 주소창 또는 앱 설정에서 위치 허용 후 다시 눌러주세요.";
+            break;
+          case 2:
+            msg = "위치를 확인할 수 없습니다. 잠시 후 다시 시도해주세요.";
+            break;
+          case 3:
+            msg = "위치 요청 시간 초과. 다시 시도해주세요.";
+            break;
+          default:
+            msg =
+              "위치 요청이 차단되었습니다. 다른 앱의 알림창/오버레이를 닫고 다시 시도하거나, 브라우저 대신 PWA 앱으로 접속해주세요.";
+        }
+        toast.error(msg);
+        console.warn("[geolocation] error", err);
+      },
       { enableHighAccuracy: true, timeout: 10000 },
     );
   }
