@@ -163,127 +163,121 @@ export function CallDetail({
 
   async function handleSettlementSubmit(event: FormEvent<HTMLFormElement>) {
     async function uploadPhotos(files: File[], type: "before" | "after") {
-  if (files.length === 0) {
-    return [];
-  }
+      if (files.length === 0) {
+        return [];
+      }
 
-  const uploadedUrls: string[] = [];
+      const uploadedUrls: string[] = [];
 
-  for (const file of Array.from(files)) {
-    const fileExt = file.name.split(".").pop();
-    const filePath = `${call.id}/${type}/${Date.now()}-${Math.random()
-      .toString(36)
-      .slice(2)}.${fileExt}`;
+      for (const file of Array.from(files)) {
+        const fileExt = file.name.split(".").pop();
+        const filePath = `${call.id}/${type}/${Date.now()}-${Math.random()
+          .toString(36)
+          .slice(2)}.${fileExt}`;
 
-    const { error } = await supabase.storage
-      .from("call-photos")
-      .upload(filePath, file);
+        const { error } = await supabase.storage
+          .from("call-photos")
+          .upload(filePath, file);
 
-    if (error) {
-      throw new Error("사진 업로드에 실패했습니다.");
+        if (error) {
+          // storage error.message 그대로 노출 → 진단 가능 (bucket 누락 / policy 거부 등).
+          throw new Error(`사진 업로드 실패: ${error.message}`);
+        }
+
+        const { data } = supabase.storage
+          .from("call-photos")
+          .getPublicUrl(filePath);
+
+        uploadedUrls.push(data.publicUrl);
+      }
+
+      return uploadedUrls;
     }
 
-    const { data } = supabase.storage
-      .from("call-photos")
-      .getPublicUrl(filePath);
-
-    uploadedUrls.push(data.publicUrl);
-  }
-
-  return uploadedUrls;
-}
     event.preventDefault();
     setErrorMessage(null);
     setSettlementLoading(true);
-    const formData = new FormData(event.currentTarget);
-    const beforeFiles = formData
-  .getAll("before_photos")
-  .filter((file): file is File => file instanceof File && file.size > 0);
 
-const afterFiles = formData
-  .getAll("after_photos")
-  .filter((file): file is File => file instanceof File && file.size > 0);
-
-const beforePhotoUrls = await uploadPhotos(beforeFiles, "before");
-const afterPhotoUrls = await uploadPhotos(afterFiles, "after");
-    const payload = {
-  call_id: call.id,
-  payment_method: formData.get("payment_method")?.toString(),
-  paid_amount: Number(formData.get("paid_amount")),
-  technician_amount: Number(formData.get("technician_amount") || 0),
-  customer_amount: Number(formData.get("customer_amount") || 0),
-  happy_call_checked:
-  formData.get("happy_call_checked") === "on",
-
-  happy_call_memo:
-  formData.get("happy_call_memo")?.toString() ?? null,
-
-  happy_call_checked_at:
-  formData.get("happy_call_checked") === "on"
-    ? new Date().toISOString()
-    : null,
-    
-  tax_included: formData.get("tax_included") === "on",
-
-  invoice_business_id:
-    formData.get("invoice_business_id")?.toString() ?? null,
-
-  invoice_business_name:
-    formData.get("invoice_business_name")?.toString() ?? null,
-
-  invoice_ceo_name:
-    formData.get("invoice_ceo_name")?.toString() ?? null,
-
-  invoice_email:
-    formData.get("invoice_email")?.toString() ?? null,
-
-  tax_invoice_file_url:
-    formData.get("tax_invoice_file_url")?.toString() ?? null,
-
-  settlement_note:
-    formData.get("settlement_note")?.toString() ?? null,
-
-  before_photo_urls: beforePhotoUrls,
-  after_photo_urls: afterPhotoUrls,
-
-  scheduled_date:
-    formData.get("scheduled_date")?.toString() || null,
-
-  reschedule_note:
-    formData.get("reschedule_note")?.toString() || null,
-
-  rescheduled: !!formData.get("scheduled_date"),
-
-  rescheduled_at: formData.get("scheduled_date")
-    ? new Date().toISOString()
-    : null,
-    happycall_customer_paid_amount:
-  Number(formData.get("happycall_customer_paid_amount")) || null,
-
-happycall_amount_mismatch:
-  Number(formData.get("happycall_customer_paid_amount")) > 0 &&
-  Number(formData.get("happycall_customer_paid_amount")) !== call.paid_amount,
-};
-
+    // 전체 흐름 outer try/catch/finally 로 wrap.
+    //   기존 구조: try/catch 가 fetch 만 감싸서 uploadPhotos throw 시 finally 도달 X
+    //              → "정산중..." 영구 stuck 버그.
+    //   수정: setSettlementLoading(true) 이후 모든 async 작업을 동일 try 안에 포함.
     try {
+      const formData = new FormData(event.currentTarget);
+      const beforeFiles = formData
+        .getAll("before_photos")
+        .filter((file): file is File => file instanceof File && file.size > 0);
+
+      const afterFiles = formData
+        .getAll("after_photos")
+        .filter((file): file is File => file instanceof File && file.size > 0);
+
+      const beforePhotoUrls = await uploadPhotos(beforeFiles, "before");
+      const afterPhotoUrls = await uploadPhotos(afterFiles, "after");
+
+      const payload = {
+        call_id: call.id,
+        payment_method: formData.get("payment_method")?.toString(),
+        paid_amount: Number(formData.get("paid_amount")),
+        technician_amount: Number(formData.get("technician_amount") || 0),
+        customer_amount: Number(formData.get("customer_amount") || 0),
+        happy_call_checked: formData.get("happy_call_checked") === "on",
+        happy_call_memo:
+          formData.get("happy_call_memo")?.toString() ?? null,
+        happy_call_checked_at:
+          formData.get("happy_call_checked") === "on"
+            ? new Date().toISOString()
+            : null,
+        tax_included: formData.get("tax_included") === "on",
+        invoice_business_id:
+          formData.get("invoice_business_id")?.toString() ?? null,
+        invoice_business_name:
+          formData.get("invoice_business_name")?.toString() ?? null,
+        invoice_ceo_name:
+          formData.get("invoice_ceo_name")?.toString() ?? null,
+        invoice_email: formData.get("invoice_email")?.toString() ?? null,
+        tax_invoice_file_url:
+          formData.get("tax_invoice_file_url")?.toString() ?? null,
+        settlement_note: formData.get("settlement_note")?.toString() ?? null,
+        before_photo_urls: beforePhotoUrls,
+        after_photo_urls: afterPhotoUrls,
+        scheduled_date: formData.get("scheduled_date")?.toString() || null,
+        reschedule_note: formData.get("reschedule_note")?.toString() || null,
+        rescheduled: !!formData.get("scheduled_date"),
+        rescheduled_at: formData.get("scheduled_date")
+          ? new Date().toISOString()
+          : null,
+        happycall_customer_paid_amount:
+          Number(formData.get("happycall_customer_paid_amount")) || null,
+        happycall_amount_mismatch:
+          Number(formData.get("happycall_customer_paid_amount")) > 0 &&
+          Number(formData.get("happycall_customer_paid_amount")) !==
+            call.paid_amount,
+      };
+
       const response = await fetch("/api/calls/settlement", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      const data = await response.json();
+      const data = await response.json().catch(() => ({}));
       if (!response.ok) {
         setErrorMessage(data.error ?? "정산 저장에 실패했습니다.");
-      } else {
-  if (data.happy_call_url) {
-    alert(`고객 확인 링크 생성 완료\n\n${data.happy_call_url}`);
-  }
-
-  router.refresh();
-}
-    } catch {
-      setErrorMessage("정산 저장에 실패했습니다.");
+        return;
+      }
+      if (data.happy_call_url) {
+        alert(`고객 확인 링크 생성 완료\n\n${data.happy_call_url}`);
+      }
+      router.refresh();
+    } catch (err) {
+      // uploadPhotos throw 든 fetch throw 든 모두 여기에서 처리.
+      // error.message 그대로 노출 → 사용자가 "사진 업로드 실패: <원인>" 등 식별 가능.
+      const msg =
+        err instanceof Error ? err.message : "정산 저장 중 오류가 발생했습니다.";
+      setErrorMessage(msg);
+      console.warn("[settlement] submit failed:", err);
     } finally {
+      // 어떤 경로(성공/실패/upload error)로든 loading 해제 보장 → 무한 "정산중.." 방지.
       setSettlementLoading(false);
     }
   }
