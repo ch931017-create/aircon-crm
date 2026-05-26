@@ -46,11 +46,20 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  // mark_paid 분기 (운영 정책):
+  //   true  = 결제완료. payment_status='paid' + paid_at 설정. 해피콜 최초 1회 발송.
+  //   false = 작업완료(미수). payment_status='unpaid' + paid_at=null. 해피콜 절대 미발송.
+  //          happy_call_token / happy_call_sent_at 도 절대 건드리지 않음 (이후 결제완료
+  //          누르면 그때 비로소 token 생성).
+  const markPaid = body.mark_paid === true || body.mark_paid === "true";
+
   const supabase = createClient();
 
   const { data: existingCall, error: callFetchError } = await supabase
     .from("calls")
-    .select("phone, happy_call_token, happy_call_sent_at, customer_confirmed_at")
+    .select(
+      "phone, happy_call_token, happy_call_sent_at, customer_confirmed_at, payment_status, paid_at",
+    )
     .eq("id", callId)
     .single();
 
@@ -58,14 +67,25 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: callFetchError.message }, { status: 400 });
   }
 
-  const existingHappyCallToken = existingCall?.happy_call_token?.toString() ?? null;
-  const shouldSendHappyCall = !existingHappyCallToken;
+  const existingHappyCallToken =
+    existingCall?.happy_call_token?.toString() ?? null;
+  // 해피콜 발송 조건 (안전 가드):
+  //   - mark_paid=true 일 때만
+  //   - 기존 token 없을 때만 (중복 발송 절대 금지)
+  const shouldSendHappyCall = markPaid && !existingHappyCallToken;
 
-  const happyCallToken = shouldSendHappyCall
-    ? createHappyCallToken()
+  // happy_call_token 결정:
+  //   - mark_paid=false: 절대 생성하지 않음. 기존 값이 있으면 유지(드물지만 정합용),
+  //                     없으면 null 그대로.
+  //   - mark_paid=true: 기존 있으면 그대로, 없으면 새로 생성.
+  const happyCallToken = markPaid
+    ? (existingHappyCallToken ?? createHappyCallToken())
     : existingHappyCallToken;
 
-  const happyCallUrl = `${process.env.NEXT_PUBLIC_APP_URL}/happy-call/${happyCallToken}`;
+  // happy_call_url 은 token 있을 때만 의미 있음. 응답에서 노출 X (UI 정책).
+  const happyCallUrl = happyCallToken
+    ? `${process.env.NEXT_PUBLIC_APP_URL}/happy-call/${happyCallToken}`
+    : null;
 
   const updateData: Record<string, unknown> = {
     payment_method: paymentMethod,
@@ -77,11 +97,6 @@ export async function POST(request: NextRequest) {
     happy_call_memo: happyCallMemo,
     happy_call_checked_at: happyCallCheckedAt,
 
-    happy_call_token: happyCallToken,
-    happy_call_sent_at: shouldSendHappyCall
-      ? new Date().toISOString()
-      : existingCall.happy_call_sent_at,
-
     customer_confirmed_at: existingCall.customer_confirmed_at,
 
     before_photo_urls: beforePhotoUrls,
@@ -90,6 +105,28 @@ export async function POST(request: NextRequest) {
     status: "completed",
     completed_at: new Date().toISOString(),
   };
+
+  // happy_call_token / sent_at: 최초 발송 시점에만 update.
+  // mark_paid=false 또는 이미 token 있는 결제완료 수정은 두 필드 모두 미터치 →
+  // 옛 값 그대로 보존. 중복 발송/덮어쓰기 0.
+  if (shouldSendHappyCall) {
+    updateData.happy_call_token = happyCallToken;
+    updateData.happy_call_sent_at = new Date().toISOString();
+  }
+
+  // payment_status / paid_at 분기:
+  //   결제완료: payment_status='paid'. paid_at 은 unpaid→paid 전환 시에만 새로 설정.
+  //   작업완료: payment_status='unpaid' + paid_at=null.
+  if (markPaid) {
+    updateData.payment_status = "paid";
+    if (existingCall?.payment_status !== "paid") {
+      updateData.paid_at = new Date().toISOString();
+    }
+    // 이미 paid 면 paid_at 미터치 (불필요한 덮어쓰기 회피).
+  } else {
+    updateData.payment_status = "unpaid";
+    updateData.paid_at = null;
+  }
 
   if (paymentMethod === "tax_invoice") {
     updateData.invoice_business_id = invoiceBusinessId;
@@ -107,7 +144,9 @@ export async function POST(request: NextRequest) {
 
   const phone = existingCall?.phone?.toString() ?? "";
 
-  if (shouldSendHappyCall) {
+  // SMS 발송: mark_paid=true + 기존 token 없을 때만 (shouldSendHappyCall 조건).
+  // happyCallUrl 은 위에서 token 있을 때만 설정됨 → null 가드.
+  if (shouldSendHappyCall && happyCallUrl) {
     await sendHappyCallSms({
       phone,
       url: happyCallUrl,
@@ -149,7 +188,11 @@ export async function POST(request: NextRequest) {
 
   return NextResponse.json({
     success: true,
+    // happy_call_url 은 UI 에서 노출하지 않음. 응답에 남겨두지만 클라이언트가 alert 등으로
+    // 직접 표시 X (PII + UX 보호). markPaid=false 면 null.
     happy_call_url: happyCallUrl,
     happy_call_sent: shouldSendHappyCall,
+    mark_paid: markPaid,
+    payment_status: markPaid ? "paid" : "unpaid",
   });
 }

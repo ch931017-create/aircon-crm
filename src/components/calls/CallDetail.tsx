@@ -197,6 +197,16 @@ export function CallDetail({
 
     event.preventDefault();
     setErrorMessage(null);
+
+    // 클릭된 버튼 식별: data-action="paid" 면 결제완료, 그 외(="work" 또는 미지정)는 작업완료.
+    // submitter 는 native SubmitEvent 의 표준 속성 — 두 submit 버튼 중 어느 쪽이
+    // 트리거됐는지 정확히 알 수 있음.
+    const submitter =
+      (event.nativeEvent as SubmitEvent).submitter as
+        | HTMLButtonElement
+        | null;
+    const markPaid = submitter?.dataset.action === "paid";
+
     setSettlementLoading(true);
 
     // 전체 흐름 outer try/catch/finally 로 wrap.
@@ -218,6 +228,8 @@ export function CallDetail({
 
       const payload = {
         call_id: call.id,
+        // mark_paid 분기: true=결제완료, false=작업완료(미수). 서버에서 해피콜/payment 분기.
+        mark_paid: markPaid,
         payment_method: formData.get("payment_method")?.toString(),
         paid_amount: Number(formData.get("paid_amount")),
         technician_amount: Number(formData.get("technician_amount") || 0),
@@ -266,10 +278,14 @@ export function CallDetail({
         setErrorMessage(data.error ?? "정산 저장에 실패했습니다.");
         return;
       }
-      // 해피콜 전송은 서버에서 최초 1회만 실행 (settlement API 의 shouldSendHappyCall).
-      // 응답의 happy_call_sent 가 true 일 때만 발송 안내, 그 외는 일반 저장 안내.
-      // 내부 happy_call_url 은 의도적으로 사용자에게 노출하지 않음 (PII 보호 + UX 명확화).
-      if (data.happy_call_sent === true) {
+      // Toast 분기 (운영 정책):
+      //   - 작업완료(미수): "작업완료 저장되었습니다. 미수로 등록되었습니다."
+      //   - 결제완료 + 해피콜 최초 발송: "고객님께 해피콜 전송완료."
+      //   - 결제완료 + 기존 token (재발송 안됨): "정산 정보가 저장되었습니다."
+      // happy_call_url 은 사용자에게 노출하지 않음 (UX 정책).
+      if (!markPaid) {
+        toast.success("작업완료 저장되었습니다. 미수로 등록되었습니다.");
+      } else if (data.happy_call_sent === true) {
         toast.success("고객님께 해피콜 전송완료.");
       } else {
         toast.success("정산 정보가 저장되었습니다.");
@@ -572,27 +588,67 @@ export function CallDetail({
               <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{errorMessage}</p>
             )}
 
-            {/* 버튼 문구 + 정산 완료 배지:
-                  call.happy_call_token 존재 = 이미 1회 이상 정산 처리됨 → "정산 정보 저장" + 배지.
-                  미존재 = 최초 정산 → "사진 및 정산정보 저장" (해피콜 전송 동반).
-                  수정 저장도 가능 (배지는 정보 표시일 뿐 disabled 아님). */}
+            {/* 상태 배지 + 정산 버튼 (운영 정책):
+                  배지 우선순위:
+                    1) settlement_status='settled'  → "정산완료" (slate, admin 처리 후)
+                    2) payment_status='paid'        → "결제완료" (emerald)
+                    3) 위 둘 다 아님 + status='completed' → "미수 N원" (rose)
+                  버튼:
+                    - settled : 단일 "결제완료 저장 (수정)" (admin 정산취소 별도)
+                    - paid    : 단일 "결제완료 저장 (수정)" — 해피콜 재발송 X
+                    - unpaid/assigned : 두 버튼
+                        · "작업완료 저장" (미수, 해피콜 X)
+                        · "결제완료 저장" (해피콜 1회)
+                  data-action 으로 handleSettlementSubmit 에서 markPaid 판별. */}
             <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="submit"
-                disabled={settlementLoading}
-                className="rounded-xl bg-brand-600 px-4 py-3 text-sm font-medium text-white shadow-sm transition disabled:opacity-60 hover:bg-brand-700"
-              >
-                {settlementLoading
-                  ? "저장 중..."
-                  : call.happy_call_token
-                    ? "정산 정보 저장"
-                    : "사진 및 정산정보 저장"}
-              </button>
-              {call.happy_call_token ? (
+              {call.settlement_status === "settled" ? (
+                <span className="inline-flex items-center rounded-full bg-slate-200 px-2.5 py-1 text-xs font-semibold text-slate-700">
+                  정산완료
+                </span>
+              ) : call.payment_status === "paid" ? (
                 <span className="inline-flex items-center rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-700">
-                  정산 완료
+                  결제완료
+                </span>
+              ) : call.status === "completed" ? (
+                <span className="inline-flex items-center rounded-full bg-rose-100 px-2.5 py-1 text-xs font-semibold text-rose-700">
+                  미수
+                  {call.paid_amount != null
+                    ? ` ${call.paid_amount.toLocaleString()}원`
+                    : null}
                 </span>
               ) : null}
+
+              {call.payment_status === "paid" ? (
+                // 이미 결제완료: 정보 수정 저장만 (markPaid=true 유지, 해피콜 재발송 X)
+                <button
+                  type="submit"
+                  data-action="paid"
+                  disabled={settlementLoading}
+                  className="rounded-xl bg-emerald-600 px-4 py-3 text-sm font-medium text-white shadow-sm transition disabled:opacity-60 hover:bg-emerald-700"
+                >
+                  {settlementLoading ? "저장 중..." : "결제완료 저장"}
+                </button>
+              ) : (
+                <>
+                  {/* 미수 또는 미정산: 두 버튼 동시 노출 */}
+                  <button
+                    type="submit"
+                    data-action="work"
+                    disabled={settlementLoading}
+                    className="rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition disabled:opacity-60 hover:bg-slate-50"
+                  >
+                    {settlementLoading ? "저장 중..." : "작업완료 저장"}
+                  </button>
+                  <button
+                    type="submit"
+                    data-action="paid"
+                    disabled={settlementLoading}
+                    className="rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white shadow-sm transition disabled:opacity-60 hover:bg-emerald-700"
+                  >
+                    {settlementLoading ? "저장 중..." : "결제완료 저장"}
+                  </button>
+                </>
+              )}
             </div>
           </form>
         </div>
