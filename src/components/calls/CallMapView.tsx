@@ -58,9 +58,9 @@ export function CallMapView({
     [technicians, showTechnicians],
   );
 
-  const noCoordCalls = calls.filter(
-    (c) => c.latitude == null || c.longitude == null,
-  );
+  // "좌표 없는 콜" 섹션 제거 (운영 정책):
+  //   기사별 진행 콜 지역 요약 (TechnicianDistrictsSummary) 으로 대체.
+  //   미좌표 콜은 더 이상 운영상 표시 불필요 (geocoding backfill 흐름이 안정화됨).
 
   return (
     <div className="space-y-4">
@@ -81,11 +81,6 @@ export function CallMapView({
                 기사 {technicianMarkers.length}명
               </span>
             )}
-            {noCoordCalls.length > 0 && (
-              <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-700">
-                좌표 없음 {noCoordCalls.length}건
-              </span>
-            )}
           </div>
         </div>
 
@@ -101,38 +96,6 @@ export function CallMapView({
           </p>
         )}
       </div>
-
-      {noCoordCalls.length > 0 && (
-        <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h3 className="text-sm font-semibold text-slate-900">
-            좌표 없는 콜 ({noCoordCalls.length})
-          </h3>
-          <p className="mt-1 text-xs text-slate-500">
-            주소 geocoding이 실패했거나, migration 015 적용 전에 등록된 콜입니다.
-          </p>
-          <div className="mt-3 space-y-2">
-            {noCoordCalls.slice(0, 20).map((call) => (
-              <div
-                key={call.id}
-                className="rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm"
-              >
-                <p className="font-medium text-slate-900">
-                  {call.customer_name}{" "}
-                  <span className="text-xs text-slate-500">
-                    {call.district ?? "지역 미정"}
-                  </span>
-                </p>
-                <p className="text-xs text-slate-500">{call.address}</p>
-              </div>
-            ))}
-            {noCoordCalls.length > 20 && (
-              <p className="text-xs text-slate-500">
-                + {noCoordCalls.length - 20}건 더 있음
-              </p>
-            )}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
