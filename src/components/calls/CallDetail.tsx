@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { FormEvent, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
 import { StatusBadge } from "./StatusBadge";
 import { STATUS_LABEL } from "@/lib/call-meta";
@@ -265,8 +266,13 @@ export function CallDetail({
         setErrorMessage(data.error ?? "정산 저장에 실패했습니다.");
         return;
       }
-      if (data.happy_call_url) {
-        alert(`고객 확인 링크 생성 완료\n\n${data.happy_call_url}`);
+      // 해피콜 전송은 서버에서 최초 1회만 실행 (settlement API 의 shouldSendHappyCall).
+      // 응답의 happy_call_sent 가 true 일 때만 발송 안내, 그 외는 일반 저장 안내.
+      // 내부 happy_call_url 은 의도적으로 사용자에게 노출하지 않음 (PII 보호 + UX 명확화).
+      if (data.happy_call_sent === true) {
+        toast.success("고객님께 해피콜 전송완료.");
+      } else {
+        toast.success("정산 정보가 저장되었습니다.");
       }
       router.refresh();
     } catch (err) {
@@ -566,13 +572,28 @@ export function CallDetail({
               <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{errorMessage}</p>
             )}
 
-            <button
-              type="submit"
-              disabled={settlementLoading}
-              className="rounded-xl bg-brand-600 px-4 py-3 text-sm font-medium text-white shadow-sm transition disabled:opacity-60 hover:bg-brand-700"
-            >
-              {settlementLoading ? "저장 중..." : call.status === "assigned" ? "완료 처리" : "정산 정보 저장"}
-            </button>
+            {/* 버튼 문구 + 정산 완료 배지:
+                  call.happy_call_token 존재 = 이미 1회 이상 정산 처리됨 → "정산 정보 저장" + 배지.
+                  미존재 = 최초 정산 → "사진 및 정산정보 저장" (해피콜 전송 동반).
+                  수정 저장도 가능 (배지는 정보 표시일 뿐 disabled 아님). */}
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="submit"
+                disabled={settlementLoading}
+                className="rounded-xl bg-brand-600 px-4 py-3 text-sm font-medium text-white shadow-sm transition disabled:opacity-60 hover:bg-brand-700"
+              >
+                {settlementLoading
+                  ? "저장 중..."
+                  : call.happy_call_token
+                    ? "정산 정보 저장"
+                    : "사진 및 정산정보 저장"}
+              </button>
+              {call.happy_call_token ? (
+                <span className="inline-flex items-center rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-700">
+                  정산 완료
+                </span>
+              ) : null}
+            </div>
           </form>
         </div>
       ) : canUpdateStatus ? (
