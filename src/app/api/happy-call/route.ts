@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 
+// 고객(비로그인) 제출 endpoint.
+// RLS calls 정책이 'TO authenticated' 라 anon cookie client 는 SELECT/UPDATE 차단.
+// → service_role admin client 로 우회. token 검증은 코드 레벨 (eq happy_call_token).
+// page.tsx 와 동일 패턴.
 export async function POST(request: Request) {
   try {
     const body = await request.json();
@@ -32,15 +36,19 @@ const customerMemo = body.memo?.toString() ?? null;
       );
     }
 
-    const supabase = createClient();
+    const supabase = createAdminClient();
 
     const { data: call, error: fetchError } = await supabase
       .from("calls")
       .select("id, technician_amount")
       .eq("happy_call_token", token)
-      .single();
+      .maybeSingle();
 
     if (fetchError || !call) {
+      console.warn(
+        "[happy-call-api] token lookup failed tokenPrefix=",
+        token.slice(0, 6),
+      );
       return NextResponse.json(
         { error: "확인할 작업을 찾을 수 없습니다." },
         { status: 404 },

@@ -87,6 +87,25 @@ export async function POST(request: NextRequest) {
     ? `${process.env.NEXT_PUBLIC_APP_URL}/happy-call/${happyCallToken}`
     : null;
 
+  // [diag] happy-call link 생성 진단 — 민감정보 마스킹:
+  //   - tokenExists boolean
+  //   - host (도메인 — production 일치 여부 확인)
+  //   - pathPrefix (/happy-call 인지 확인, 전체 token 노출 X)
+  if (happyCallUrl) {
+    try {
+      const u = new URL(happyCallUrl);
+      console.log(
+        `[happy-call-link] tokenExists=true host=${u.host} pathPrefix=${u.pathname.split("/").slice(0, 2).join("/")}`,
+      );
+    } catch {
+      console.warn(
+        "[happy-call-link] invalid URL — NEXT_PUBLIC_APP_URL 확인 필요",
+      );
+    }
+  } else {
+    console.log("[happy-call-link] tokenExists=false (markPaid=false 경로)");
+  }
+
   const updateData: Record<string, unknown> = {
     payment_method: paymentMethod,
     paid_amount: paidAmount,
