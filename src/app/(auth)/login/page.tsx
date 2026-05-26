@@ -38,7 +38,7 @@ export default function LoginPage({
                 ① 강조 라인 (운영 메시지)
                 ② 보조 라인 (플랫폼 설명) */}
           <p className="mt-2 text-sm font-semibold text-emerald-800">
-            여름만큼은 우리가 &apos;갑&apos; 고객이 &apos;을&apos;
+            소방관은 불을 끄고, 의사는 수술을 하고, 우리는 에어컨을 고치지만 셋이 공통점이 있다.&apos;그것은 사람을 살리는 직업이라는 것&apos;
           </p>
           <p className="mt-1 text-xs font-medium text-emerald-700/70">
             현장 중심 에어컨 기사운영 플랫폼
