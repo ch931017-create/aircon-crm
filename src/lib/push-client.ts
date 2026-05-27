@@ -257,7 +257,78 @@ export function getPushPermissionState():
   }
 }
 
-// 어떤 환경에서도 throw하지 않음.
+// iOS Safari PWA(홈 화면 앱) 모드 감지.
+//   - display-mode: standalone 매치 (W3C 표준, Chrome/Edge/iOS 16.4+)
+//   - navigator.standalone === true (iOS Safari 전용 legacy 속성, 보강)
+// PWA 모드인 경우 push 인프라가 SW ready 이후에 노출되는 케이스 있어 별도 분기 도움.
+export function isPwaStandalone(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    if (window.matchMedia?.("(display-mode: standalone)").matches) return true;
+    const navStandalone = (
+      navigator as Navigator & { standalone?: boolean }
+    ).standalone;
+    if (navStandalone === true) return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+// 비동기 capability 체크 — serviceWorker.ready 까지 대기 후 판단.
+// 이유:
+//   iOS Safari PWA 환경에서 mount 직후엔 PushManager / Notification 글로벌이
+//   아직 노출 안 된 timing 이 관찰됨. SW.ready 이후 다시 확인하면 정상 노출.
+// 정책:
+//   - SW.ready 5초 timeout. 그 안에 안 되면 unsupported.
+//   - Android Chrome 은 SW.ready 가 거의 즉시 resolve 되므로 회귀 없음.
+const SUPPORT_CHECK_TIMEOUT_MS = 5_000;
+
+export async function isPushSupportedAsync(): Promise<boolean> {
+  try {
+    if (typeof window === "undefined") return false;
+    if (typeof navigator === "undefined") return false;
+    if (!("serviceWorker" in navigator)) return false;
+
+    // SW.ready 대기 — iOS PWA 측 capability 노출 timing 보강.
+    try {
+      await withTimeout(
+        navigator.serviceWorker.ready,
+        SUPPORT_CHECK_TIMEOUT_MS,
+        "SW_READY",
+      );
+    } catch (err) {
+      console.warn(
+        "[push] isPushSupportedAsync: SW.ready timeout/fail",
+        err,
+      );
+      return false;
+    }
+
+    const hasPushManager = "PushManager" in window;
+    const hasNotification = typeof Notification !== "undefined";
+    const standalone = isPwaStandalone();
+
+    // 디버그 로그: 운영 사용자가 PWA 콘솔에서 즉시 진단 가능 (특히 iPhone).
+    console.log("[push] capability", {
+      hasSW: "serviceWorker" in navigator,
+      hasPushManager,
+      hasNotification,
+      standalone,
+      ua: navigator.userAgent.slice(0, 80),
+    });
+
+    if (!hasPushManager) return false;
+    if (!hasNotification) return false;
+    return true;
+  } catch (err) {
+    console.warn("[push] isPushSupportedAsync exception:", err);
+    return false;
+  }
+}
+
+// 동기 버전 — SSR/즉시 판단용. iOS PWA 오탐 가능성 있어 비동기 버전 권장.
+// 보존: 기존 호출처 호환성. 새 코드는 isPushSupportedAsync 사용.
 export function isPushSupported(): boolean {
   try {
     if (typeof window === "undefined") return false;

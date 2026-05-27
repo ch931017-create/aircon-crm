@@ -7,7 +7,7 @@ import {
   subscribeUserToPush,
   unsubscribeUserFromPush,
   getPushPermissionState,
-  isPushSupported,
+  isPushSupportedAsync,
 } from "@/lib/push-client";
 import type { UserRole } from "@/types/database";
 
@@ -37,7 +37,8 @@ const REASON_MESSAGE: Record<string, string> = {
 export function SettingsClient({ role, notifyCompletion }: Props) {
   const router = useRouter();
   const [permission, setPermission] = useState<PermissionState>("default");
-  const [supported, setSupported] = useState<boolean>(true);
+  // null = 확인 중 (iOS PWA 오탐 방지를 위해 SW.ready 후 비동기 판단).
+  const [supported, setSupported] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
   const [completionEnabled, setCompletionEnabled] = useState(notifyCompletion);
 
@@ -96,8 +97,16 @@ export function SettingsClient({ role, notifyCompletion }: Props) {
 
   useEffect(() => {
     setPermission(getPushPermissionState());
-    setSupported(isPushSupported());
+    // 비동기 capability 체크 — serviceWorker.ready 후 정확 판단.
+    //   iOS PWA 오탐 방지: mount 직후엔 PushManager/Notification 미노출 가능.
+    let cancelled = false;
+    isPushSupportedAsync().then((s) => {
+      if (!cancelled) setSupported(s);
+    });
     void refetchPushStatus();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // 상태 derive
@@ -283,16 +292,25 @@ export function SettingsClient({ role, notifyCompletion }: Props) {
         </div>
 
         {/* 버튼 분기 정책 (위에서부터 우선):
-              1. 미지원                           → 안내 텍스트
-              2. 권한 차단                        → 차단 안내
+              0. supported === null → "확인 중..." (SW.ready 비동기 판단 대기)
+              1. supported === false → 안내 텍스트
+              2. 권한 차단         → 차단 안내
               3. mismatch (local✓ + serverDevice✗) → "푸시 재등록"
               4. local✓ + serverDevice✓           → "알림 구독 해제"
               5. 그 외 (local✗ 등)                → "알림 켜기"
             permission === "granted" 단독 분기 X → 해제 후에도 버튼이 안 바뀌는 버그 회피. */}
         <div className="mt-4">
-          {!supported ? (
+          {supported === null ? (
+            <p className="rounded-2xl bg-slate-50 px-3 py-2 text-xs text-slate-500">
+              지원 여부 확인 중...
+            </p>
+          ) : !supported ? (
             <p className="rounded-2xl bg-slate-50 px-3 py-2 text-xs text-slate-600">
               이 브라우저는 푸시 알림을 지원하지 않습니다.
+              <br />
+              <span className="text-[11px] text-slate-500">
+                (iPhone 은 홈 화면에 추가한 PWA 에서만 지원됨)
+              </span>
             </p>
           ) : permission === "denied" ? (
             <p className="rounded-2xl bg-rose-50 px-3 py-2 text-xs text-rose-700">
